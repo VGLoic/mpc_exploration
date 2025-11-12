@@ -1,0 +1,81 @@
+name: CI
+
+on:
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        name: Check format
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - run: cargo fmt --check
+    unit-tests:
+        runs-on: ubuntu-latest
+        name: Unit tests
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - run: cargo test --lib
+    doc-tests:
+        runs-on: ubuntu-latest
+        name: Documentation tests
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - run: cargo test --doc
+    integration-tests:
+        runs-on: ubuntu-latest
+        name: Integration tests
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - name: Run integration test script
+              run: |
+                chmod +x scripts/integration-test.sh
+                ./scripts/integration-test.sh
+              shell: bash
+    build:
+        runs-on: ubuntu-latest
+        name: Build
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - run: cargo build --verbose
+    clippy:
+        runs-on: ubuntu-latest
+        name: Check lint
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions-rust-lang/setup-rust-toolchain@v1
+              with:
+                toolchain: stable
+                override: true
+            - run: cargo clippy -- -Dwarnings
+
