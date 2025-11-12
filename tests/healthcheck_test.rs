@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use mpc_exploration::GetHealthcheckResponse;
+use mpc_exploration::routes::GetHealthcheckResponse;
 
 mod common;
 

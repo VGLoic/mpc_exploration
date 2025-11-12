@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use mpc_exploration::{Config, app_router};
+use mpc_exploration::{Config, routes::app_router};
 use tower_http::trace::TraceLayer;
 use tracing::{Level, info, level_filters::LevelFilter};
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
