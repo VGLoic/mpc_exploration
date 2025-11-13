@@ -1,17 +1,35 @@
+use std::sync::{Arc, RwLock};
+
 use axum::{
     Json, Router,
+    extract::FromRequestParts,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
+use tracing::error;
 
-use crate::Config;
+use crate::{Config, Peer};
 
-pub fn app_router(_: &Config) -> Router {
+mod addition;
+
+#[derive(Debug, Clone)]
+struct RouterState {
+    addition: Arc<RwLock<addition::AdditionState>>,
+    peers: Vec<Peer>,
+}
+
+pub fn app_router(config: &Config) -> Router {
+    let state = RouterState {
+        addition: Arc::new(RwLock::new(addition::AdditionState::new())),
+        peers: config.peers.clone(),
+    };
     Router::new()
         .route("/health", get(get_healthcheck))
+        .nest("/addition", addition::addition_router())
         .fallback(not_found_handler)
+        .with_state(state)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -31,14 +49,48 @@ async fn not_found_handler() -> impl IntoResponse {
 // ############################################
 
 #[derive(Debug)]
-enum ApiError {
+pub enum ApiError {
     NotFound,
+    InternalServerError(anyhow::Error),
+    BadRequest(String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         match self {
             Self::NotFound => (StatusCode::NOT_FOUND, "Not found").into_response(),
+            Self::InternalServerError(e) => {
+                error!("Internal server error: {:?}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+            }
+            Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
         }
+    }
+}
+
+// ######################################################
+// ################## PEER RESTRICTION ##################
+// ######################################################
+
+impl FromRequestParts<RouterState> for Peer {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &RouterState,
+    ) -> Result<Self, Self::Rejection> {
+        let connect_info = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .ok_or_else(|| ApiError::InternalServerError(anyhow::anyhow!("Missing ConnectInfo")))?;
+        let related_peer = state
+            .peers
+            .iter()
+            .find(|peer| peer.addr == connect_info.0)
+            .ok_or(ApiError::BadRequest(format!(
+                "Unauthorized peer: {}",
+                connect_info.0
+            )))?;
+        Ok(related_peer.clone())
     }
 }

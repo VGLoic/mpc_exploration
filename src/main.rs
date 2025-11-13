@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 use axum::{
     body::Body,
@@ -99,14 +99,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
     info!("Successfully bind the TCP listener to address {addr}\n");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|err| {
-            let err = format!("Error while serving the routes: {err}");
-            error!(err);
-            anyhow::anyhow!(err)
-        })?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|err| {
+        let err = format!("Error while serving the routes: {err}");
+        error!(err);
+        anyhow::anyhow!(err)
+    })?;
 
     info!("App has been gracefully shutdown");
 

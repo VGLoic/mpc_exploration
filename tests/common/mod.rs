@@ -18,6 +18,7 @@ pub async fn setup() -> Result<TestState, anyhow::Error> {
     let config = Config {
         port: 0,
         log_level: Level::TRACE,
+        peers: vec![],
     };
 
     let app = app_router(&config).layer(TraceLayer::new_for_http());
