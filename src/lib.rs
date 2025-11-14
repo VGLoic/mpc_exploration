@@ -1,6 +1,5 @@
 use std::{
     env::{self, VarError},
-    net::SocketAddr,
     str::FromStr,
 };
 use tracing::Level;
@@ -14,6 +13,7 @@ pub mod routes;
 pub struct Config {
     pub port: u16,
     pub log_level: Level,
+    pub server_peer_id: u8,
     pub peers: Vec<Peer>,
 }
 
@@ -38,6 +38,14 @@ impl Config {
             }
         };
 
+        let server_peer_id = match parse_required_env_variable::<u8>("SERVER_PEER_ID") {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(e.to_string());
+                0
+            }
+        };
+
         let peers = match parse_peers() {
             Ok(v) => v,
             Err(e) => {
@@ -53,6 +61,7 @@ impl Config {
         Ok(Config {
             port,
             log_level,
+            server_peer_id,
             peers,
         })
     }
@@ -60,33 +69,32 @@ impl Config {
 
 #[derive(Debug, Clone)]
 pub struct Peer {
-    pub addr: SocketAddr,
     pub id: u8,
+    pub url: String,
 }
 
 impl Peer {
-    pub fn new(addr: SocketAddr, id: u8) -> Self {
-        Self { addr, id }
+    pub fn new(id: u8, url: String) -> Self {
+        Self { id, url }
     }
 }
 
 fn parse_peers() -> Result<Vec<Peer>, anyhow::Error> {
-    let raw_urls = parse_required_env_variable::<String>("PEER_ADDRESSES")?;
-    let peer_addresses: Vec<SocketAddr> = raw_urls
+    let raw_urls = parse_required_env_variable::<String>("PEER_URLS")?;
+    let peer_urls: Vec<String> = raw_urls
         .split(',')
-        .map(|s| s.trim().parse())
-        .collect::<Result<Vec<SocketAddr>, _>>()?;
-    if peer_addresses.is_empty() {
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if peer_urls.is_empty() {
         return Err(anyhow::anyhow!("[PEERS]: must contain at least one peer"));
     }
-    let peer_url_set = peer_addresses
+    let peer_url_set = peer_urls
         .iter()
         .cloned()
-        .collect::<std::collections::HashSet<SocketAddr>>();
-    if peer_url_set.len() != peer_addresses.len() {
-        return Err(anyhow::anyhow!(
-            "[PEER_ADDRESSES]: must contain unique urls"
-        ));
+        .collect::<std::collections::HashSet<String>>();
+    if peer_url_set.len() != peer_urls.len() {
+        return Err(anyhow::anyhow!("[PEER_URLS]: must contain unique urls"));
     }
     let raw_ids = parse_required_env_variable::<String>("PEER_IDS")?;
     let peer_ids = raw_ids
@@ -101,16 +109,16 @@ fn parse_peers() -> Result<Vec<Peer>, anyhow::Error> {
         return Err(anyhow::anyhow!("[PEER_IDS]: must contain unique ids"));
     }
 
-    if peer_addresses.len() != peer_ids.len() {
+    if peer_urls.len() != peer_ids.len() {
         return Err(anyhow::anyhow!(
-            "[PEER_ADDRESSES] and [PEER_IDS] must have the same number of entries"
+            "[PEER_URLS] and [PEER_IDS] must have the same number of entries"
         ));
     }
 
-    let peers = peer_addresses
+    let peers = peer_urls
         .into_iter()
         .zip(peer_ids)
-        .map(|(url, id)| Peer::new(url, id))
+        .map(|(url, id)| Peer::new(id, url))
         .collect();
 
     Ok(peers)

@@ -18,6 +18,7 @@ pub async fn setup() -> Result<TestState, anyhow::Error> {
     let config = Config {
         port: 0,
         log_level: Level::TRACE,
+        server_peer_id: 1,
         peers: vec![],
     };
 

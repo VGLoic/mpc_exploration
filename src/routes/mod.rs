@@ -8,7 +8,7 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{Config, Peer};
 
@@ -27,7 +27,10 @@ pub fn app_router(config: &Config) -> Router {
     };
     Router::new()
         .route("/health", get(get_healthcheck))
-        .nest("/addition", addition::addition_router())
+        .nest(
+            "/addition",
+            addition::addition_router(config.server_peer_id),
+        )
         .fallback(not_found_handler)
         .with_state(state)
 }
@@ -53,6 +56,7 @@ pub enum ApiError {
     NotFound,
     InternalServerError(anyhow::Error),
     BadRequest(String),
+    Unauthorized(String),
 }
 
 impl IntoResponse for ApiError {
@@ -64,6 +68,10 @@ impl IntoResponse for ApiError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
             }
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            Self::Unauthorized(msg) => {
+                warn!("Unauthorized access attempt: {}", msg);
+                StatusCode::UNAUTHORIZED.into_response()
+            }
         }
     }
 }
@@ -79,18 +87,23 @@ impl FromRequestParts<RouterState> for Peer {
         parts: &mut axum::http::request::Parts,
         state: &RouterState,
     ) -> Result<Self, Self::Rejection> {
-        let connect_info = parts
-            .extensions
-            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-            .ok_or_else(|| ApiError::InternalServerError(anyhow::anyhow!("Missing ConnectInfo")))?;
-        let related_peer = state
-            .peers
-            .iter()
-            .find(|peer| peer.addr == connect_info.0)
-            .ok_or(ApiError::BadRequest(format!(
-                "Unauthorized peer: {}",
-                connect_info.0
-            )))?;
+        let peer_id = parts
+            .headers
+            .get("X-PEER_ID")
+            .ok_or_else(|| ApiError::Unauthorized("Missing X-PEER_ID header".to_string()))?
+            .to_str()
+            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER_ID header: {e}")))?
+            .parse::<u8>()
+            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER_ID header: {e}")))?;
+        let related_peer =
+            state
+                .peers
+                .iter()
+                .find(|peer| peer.id == peer_id)
+                .ok_or(ApiError::Unauthorized(format!(
+                    "Unauthorized peer: {}",
+                    peer_id
+                )))?;
         Ok(related_peer.clone())
     }
 }

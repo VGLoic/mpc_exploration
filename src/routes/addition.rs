@@ -1,6 +1,7 @@
+use ::futures::{StreamExt, stream};
 use anyhow::anyhow;
-use axum::{Router, extract::State, http::StatusCode, routing::post};
-use tracing::info;
+use axum::{Extension, Router, extract::State, http::StatusCode, routing::post};
+use tracing::{error, info};
 
 use crate::Peer;
 
@@ -44,16 +45,73 @@ impl AdditionState {
     }
 }
 
-pub fn addition_router() -> Router<RouterState> {
+pub fn addition_router(server_peer_id: u8) -> Router<RouterState> {
     Router::new()
         .route("/send-share", post(send_share))
+        .layer(Extension(server_peer_id))
         .route("/receive-share", post(receive_share))
         .route("/send-sum-share", post(send_sum_share))
+        .layer(Extension(server_peer_id))
         .route("/receive-sum-share", post(receive_sum_share))
         .route("/reset", post(reset))
 }
 
-async fn send_share(State(state): State<RouterState>) -> Result<StatusCode, ApiError> {
+#[axum::debug_handler]
+async fn send_share(
+    State(state): State<RouterState>,
+    Extension(server_peer_id): Extension<u8>,
+) -> Result<StatusCode, ApiError> {
+    let _share_to_send = match &state
+        .addition
+        .read()
+        .map_err(|e| ApiError::InternalServerError(anyhow!("{e}")))?
+        .step
+    {
+        AdditionStep::WaitingForShares(t) => t.own_share,
+        _ => {
+            return Err(ApiError::BadRequest(
+                "the server is currently not sending shares".to_string(),
+            ));
+        }
+    };
+
+    let client = reqwest::Client::new();
+
+    let urls = state
+        .peers
+        .iter()
+        .map(|peer| format!("{}/addition/receive-share", peer.url))
+        .collect::<Vec<String>>();
+    let bodies = stream::iter(urls)
+        .map(|url| {
+            let client = &client;
+            async move {
+                let res = client
+                    .post(url)
+                    .header("X-PEER_ID", server_peer_id.to_string())
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("Failed to send share: {}", res.status()))
+                }
+            }
+        })
+        .buffer_unordered(2);
+
+    bodies
+        .for_each(|result: Result<(), anyhow::Error>| async {
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Error sending share: {}", e);
+                }
+            }
+        })
+        .await;
+
     let mut w_state = state
         .addition
         .write()
@@ -66,7 +124,7 @@ async fn send_share(State(state): State<RouterState>) -> Result<StatusCode, ApiE
             ));
         }
     };
-    // Implementation of sending share
+
     share_tracker.own_share_sent = true;
 
     if share_tracker.own_share_sent && share_tracker.received_shares.len() == state.peers.len() {
@@ -139,7 +197,59 @@ async fn receive_share(
 
     Ok(StatusCode::OK)
 }
-async fn send_sum_share(State(state): State<RouterState>) -> Result<StatusCode, ApiError> {
+async fn send_sum_share(
+    State(state): State<RouterState>,
+    Extension(server_peer_id): Extension<u8>,
+) -> Result<StatusCode, ApiError> {
+    let _sum_share_to_send = match &state
+        .addition
+        .read()
+        .map_err(|e| ApiError::InternalServerError(anyhow!("{e}")))?
+        .step
+    {
+        AdditionStep::WaitingForSumShares(t) => t.own_share,
+        _ => {
+            return Err(ApiError::BadRequest(
+                "the server is currently not sending sum shares".to_string(),
+            ));
+        }
+    };
+
+    let peer_urls = state
+        .peers
+        .iter()
+        .map(|peer| format!("{}/addition/receive-sum-share", peer.url))
+        .collect::<Vec<String>>();
+    let client = reqwest::Client::new();
+    let bodies = stream::iter(peer_urls)
+        .map(|url| {
+            let client = &client;
+            async move {
+                let res = client
+                    .post(url)
+                    .header("X-PEER_ID", server_peer_id.to_string())
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
+                if res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("Failed to send sum share: {}", res.status()))
+                }
+            }
+        })
+        .buffer_unordered(2);
+    bodies
+        .for_each(|result: Result<(), anyhow::Error>| async {
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Error sending sum share: {}", e);
+                }
+            }
+        })
+        .await;
+
     let mut w_state = state
         .addition
         .write()
