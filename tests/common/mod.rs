@@ -32,10 +32,14 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
 
     let app = app_router(&config).layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
-    let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|err| {
-        anyhow::anyhow!("Failed to bind the TCP listener to address {addr}: {err}")
-    })?;
+    let listener = if config.port == 0 {
+        bind_listener_to_free_port().await?
+    } else {
+        let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
+        tokio::net::TcpListener::bind(&addr).await.map_err(|err| {
+            anyhow::anyhow!("Failed to bind the TCP listener to address {addr}: {err}")
+        })?
+    };
 
     let addr = listener.local_addr().unwrap();
 
@@ -47,4 +51,17 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
     Ok(InstanceState {
         server_url: format!("http://{}:{}", addr.ip(), addr.port()),
     })
+}
+
+async fn bind_listener_to_free_port() -> Result<tokio::net::TcpListener, anyhow::Error> {
+    for port in 51_000..60_000 {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(_) => continue,
+        }
+    }
+    Err(anyhow::anyhow!(
+        "No free port found in the range 51000-60000"
+    ))
 }

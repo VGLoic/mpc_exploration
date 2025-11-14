@@ -33,81 +33,32 @@ async fn test_addition() {
 
     let client = reqwest::Client::new();
 
-    let send_share_1 = client
-        .post(format!("{}/addition/send-share", &instance_1.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_share_1.status().is_success());
+    for instance in [&instance_1, &instance_2, &instance_3] {
+        let send_share = client
+            .post(format!("{}/addition/send-share", &instance.server_url))
+            .send()
+            .await
+            .unwrap();
+        assert!(send_share.status().is_success());
+    }
 
-    let send_share_2 = client
-        .post(format!("{}/addition/send-share", &instance_2.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_share_2.status().is_success());
+    for instance in [&instance_1, &instance_2, &instance_3] {
+        let send_sum_share = client
+            .post(format!("{}/addition/send-sum-share", &instance.server_url))
+            .send()
+            .await
+            .unwrap();
+        assert!(send_sum_share.status().is_success());
+    }
 
-    let send_share_3 = client
-        .post(format!("{}/addition/send-share", &instance_3.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_share_3.status().is_success());
-
-    let send_sum_share_1 = client
-        .post(format!(
-            "{}/addition/send-sum-share",
-            &instance_1.server_url
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_sum_share_1.status().is_success());
-
-    let send_sum_share_2 = client
-        .post(format!(
-            "{}/addition/send-sum-share",
-            &instance_2.server_url
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_sum_share_2.status().is_success());
-
-    let send_sum_share_3 = client
-        .post(format!(
-            "{}/addition/send-sum-share",
-            &instance_3.server_url
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert!(send_sum_share_3.status().is_success());
-
-    let last_sum_1 = client
-        .get(format!("{}/addition/last-sum", &instance_1.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(last_sum_1.status().is_success());
-    let last_sum_value_1 = last_sum_1.json::<LastSumResponse>().await.unwrap();
-    assert!(last_sum_value_1.sum > 0);
-
-    let last_sum_2 = client
-        .get(format!("{}/addition/last-sum", &instance_2.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(last_sum_2.status().is_success());
-    let last_sum_value_2 = last_sum_2.json::<LastSumResponse>().await.unwrap();
-    assert!(last_sum_value_2.sum > 0);
-
-    let last_sum_3 = client
-        .get(format!("{}/addition/last-sum", &instance_3.server_url))
-        .send()
-        .await
-        .unwrap();
-    assert!(last_sum_3.status().is_success());
-    let last_sum_value_3 = last_sum_3.json::<LastSumResponse>().await.unwrap();
-    assert!(last_sum_value_3.sum > 0);
+    for instance in [&instance_1, &instance_2, &instance_3] {
+        let last_sum = client
+            .get(format!("{}/addition/last-sum", &instance.server_url))
+            .send()
+            .await
+            .unwrap();
+        assert!(last_sum.status().is_success());
+        let last_sum_value = last_sum.json::<LastSumResponse>().await.unwrap();
+        assert!(last_sum_value.sum > 0);
+    }
 }
