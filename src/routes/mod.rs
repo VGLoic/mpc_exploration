@@ -12,17 +12,17 @@ use tracing::{error, warn};
 
 use crate::{Config, Peer};
 
-mod addition;
+pub mod addition;
 
 #[derive(Debug, Clone)]
-struct RouterState {
+pub struct RouterState {
     addition: Arc<RwLock<addition::AdditionState>>,
     peers: Vec<Peer>,
 }
 
 pub fn app_router(config: &Config) -> Router {
     let state = RouterState {
-        addition: Arc::new(RwLock::new(addition::AdditionState::new())),
+        addition: Arc::new(RwLock::new(addition::AdditionState::default())),
         peers: config.peers.clone(),
     };
     Router::new()
@@ -57,6 +57,12 @@ pub enum ApiError {
     InternalServerError(anyhow::Error),
     BadRequest(String),
     Unauthorized(String),
+}
+
+impl From<anyhow::Error> for ApiError {
+    fn from(err: anyhow::Error) -> Self {
+        ApiError::InternalServerError(err)
+    }
 }
 
 impl IntoResponse for ApiError {
