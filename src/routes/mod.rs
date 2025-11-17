@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -10,25 +10,27 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-use crate::{Config, Peer};
+use crate::{Config, Peer, routes::addition::repository::AdditionRepository};
 
 pub mod addition;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RouterState {
-    addition: Arc<RwLock<addition::AdditionState>>,
+    addition: Arc<dyn AdditionRepository>,
     peers: Vec<Peer>,
 }
 
 pub fn app_router(config: &Config) -> Router {
     let state = RouterState {
-        addition: Arc::new(RwLock::new(addition::AdditionState::default())),
+        addition: Arc::new(addition::repository::InMemoryAdditionRepository::new(
+            &config.peers,
+        )),
         peers: config.peers.clone(),
     };
     Router::new()
         .route("/health", get(get_healthcheck))
         .nest(
-            "/addition",
+            "/additions",
             addition::addition_router(config.server_peer_id),
         )
         .fallback(not_found_handler)
@@ -95,12 +97,12 @@ impl FromRequestParts<RouterState> for Peer {
     ) -> Result<Self, Self::Rejection> {
         let peer_id = parts
             .headers
-            .get("X-PEER_ID")
-            .ok_or_else(|| ApiError::Unauthorized("Missing X-PEER_ID header".to_string()))?
+            .get("X-PEER-ID")
+            .ok_or_else(|| ApiError::Unauthorized("Missing X-PEER-ID header".to_string()))?
             .to_str()
-            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER_ID header: {e}")))?
+            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER-ID header: {e}")))?
             .parse::<u8>()
-            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER_ID header: {e}")))?;
+            .map_err(|e| ApiError::Unauthorized(format!("Invalid X-PEER-ID header: {e}")))?;
         let related_peer =
             state
                 .peers
