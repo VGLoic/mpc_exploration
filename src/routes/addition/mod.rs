@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     Peer,
-    mpc::{Share, recover_secret, split_secret},
+    mpc::{Share, recover_secret},
 };
 
 use super::{ApiError, RouterState};
@@ -55,17 +55,14 @@ async fn create_process(
 
     info!("addition process created");
 
-    let shares = split_secret(
-        created_process.input,
-        state
-            .peers
-            .iter()
-            .map(|p| p.id)
-            .collect::<Vec<u8>>()
-            .as_slice(),
-        PRIME,
-    );
-    if let Err(e) = send_shares_to_peers(process_id, server_peer_id, &state.peers, shares).await {
+    if let Err(e) = send_shares_to_peers(
+        process_id,
+        server_peer_id,
+        &state.peers,
+        created_process.input_shares,
+    )
+    .await
+    {
         error!("error sending initial shares to peers: {}", e);
     }
 
@@ -89,17 +86,9 @@ async fn send_share(
         .await
         .map_err(|e| e.context("retrieving process before sending share"))?;
 
-    let shares = split_secret(
-        process.input,
-        state
-            .peers
-            .iter()
-            .map(|p| p.id)
-            .collect::<Vec<u8>>()
-            .as_slice(),
-        PRIME,
-    );
-    if let Err(e) = send_shares_to_peers(id, server_peer_id, &state.peers, shares).await {
+    if let Err(e) =
+        send_shares_to_peers(id, server_peer_id, &state.peers, process.input_shares).await
+    {
         error!("error sending shares to peers: {}", e);
     }
 
@@ -131,10 +120,11 @@ async fn receive_share(
             .map_err(|e| e.context("receiving share for existing process"))?;
 
         if let AdditionProcessState::AwaitingSumShares = &updated_process.state {
-            let own_share = *split_secret(updated_process.input, &[server_peer_id], PRIME)
+            let shares_sum = ((*updated_process
+                .input_shares
                 .get(&server_peer_id)
-                .ok_or(anyhow!("unable to find its own share"))?;
-            let shares_sum = ((own_share as u128
+                .ok_or(anyhow!("unable to find own share"))?
+                as u128
                 + updated_process
                     .peer_shares
                     .values()
@@ -154,17 +144,13 @@ async fn receive_share(
             .await
             .map_err(|e| e.context("creating process after share reception"))?;
 
-        let shares = split_secret(
-            process.input,
-            state
-                .peers
-                .iter()
-                .map(|p| p.id)
-                .collect::<Vec<u8>>()
-                .as_slice(),
-            PRIME,
-        );
-        if let Err(e) = send_shares_to_peers(process_id, server_peer_id, &state.peers, shares).await
+        if let Err(e) = send_shares_to_peers(
+            process_id,
+            server_peer_id,
+            &state.peers,
+            process.input_shares,
+        )
+        .await
         {
             error!("error sending shares to peers: {}", e);
         }
@@ -186,7 +172,8 @@ async fn send_sum_share(
 
     let shares_sum = match &process.state {
         AdditionProcessState::AwaitingSumShares => {
-            let own_share = *split_secret(process.input, &[server_peer_id], PRIME)
+            let own_share = *process
+                .input_shares
                 .get(&server_peer_id)
                 .ok_or(anyhow!("unable to find its own share"))?;
             ((own_share as u128
@@ -240,7 +227,8 @@ async fn receive_shares_sum(
         .map_err(|e| e.context("receiving sum share for existing process"))?;
 
     if let AdditionProcessState::Completed = &updated_process.state {
-        let own_share = *split_secret(updated_process.input, &[server_peer_id], PRIME)
+        let own_share = *updated_process
+            .input_shares
             .get(&server_peer_id)
             .ok_or(anyhow!("unable to find its own share"))?;
         let own_shares_sum = ((own_share as u128
@@ -302,7 +290,8 @@ async fn get_process(
         .map_err(|e| e.context("retrieving process"))?;
     let sum = match &process.state {
         AdditionProcessState::Completed => {
-            let own_share = *split_secret(process.input, &[server_peer_id], PRIME)
+            let own_share = *process
+                .input_shares
                 .get(&server_peer_id)
                 .ok_or(anyhow!("unable to find its own share"))?;
             let own_shares_sum = ((own_share as u128

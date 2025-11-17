@@ -24,6 +24,7 @@ pub fn app_router(config: &Config) -> Router {
     let state = RouterState {
         addition: Arc::new(addition::repository::InMemoryAdditionRepository::new(
             &config.peers,
+            config.server_peer_id,
         )),
         peers: config.peers.clone(),
     };

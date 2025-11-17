@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::RwLock};
 use anyhow::anyhow;
 use uuid::Uuid;
 
-use crate::Peer;
+use crate::{Peer, mpc::split_secret};
 
 #[async_trait::async_trait]
 pub trait AdditionRepository: Send + Sync {
@@ -37,21 +37,32 @@ pub trait AdditionRepository: Send + Sync {
 
 pub struct InMemoryAdditionRepository {
     processes: RwLock<HashMap<Uuid, AdditionProcess>>,
+    server_peer_id: u8,
     peer_ids: Vec<u8>,
 }
 
 impl InMemoryAdditionRepository {
-    pub fn new(peers: &[Peer]) -> Self {
+    pub fn new(peers: &[Peer], server_peer_id: u8) -> Self {
         Self {
             processes: RwLock::new(HashMap::new()),
+            server_peer_id,
             peer_ids: peers.iter().map(|p| p.id).collect(),
         }
     }
+
+    pub fn all_ids(&self) -> Vec<u8> {
+        let mut ids = self.peer_ids.clone();
+        ids.push(self.server_peer_id);
+        ids
+    }
 }
+
+const PRIME: u64 = 1_000_000_007;
 
 #[derive(Clone)]
 pub struct AdditionProcess {
     pub input: u64,
+    pub input_shares: HashMap<u8, u64>,
     pub peer_shares: HashMap<u8, u64>,
     pub peer_shares_sums: HashMap<u8, u64>,
     pub state: AdditionProcessState,
@@ -70,22 +81,18 @@ pub struct ReceivedShare {
     pub value: u64,
 }
 
-impl AdditionProcess {
-    fn new(input: u64) -> Self {
-        Self {
-            input,
-            peer_shares: HashMap::new(),
-            peer_shares_sums: HashMap::new(),
-            state: AdditionProcessState::AwaitingPeerShares,
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl AdditionRepository for InMemoryAdditionRepository {
     async fn create_process(&self, process_id: Uuid) -> Result<AdditionProcess, anyhow::Error> {
         let input = rand::random::<u16>().into();
-        let process = AdditionProcess::new(input);
+        let input_shares = split_secret(input, &self.all_ids(), PRIME);
+        let process = AdditionProcess {
+            input,
+            input_shares,
+            peer_shares: HashMap::new(),
+            peer_shares_sums: HashMap::new(),
+            state: AdditionProcessState::AwaitingPeerShares,
+        };
         let mut processes = self.processes.write().map_err(|e| {
             anyhow!("{e}").context("failed to acquire write lock on process creation")
         })?;
@@ -114,10 +121,13 @@ impl AdditionRepository for InMemoryAdditionRepository {
         })?;
 
         let input = rand::random::<u16>().into();
+        let input_shares = split_secret(input, &self.all_ids(), PRIME);
+
         let mut peer_shares = HashMap::new();
         peer_shares.insert(from_peer_id, value);
         let process = AdditionProcess {
             input,
+            input_shares,
             peer_shares,
             peer_shares_sums: HashMap::new(),
             state: AdditionProcessState::AwaitingPeerShares,
