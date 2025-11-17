@@ -81,7 +81,6 @@ async fn assert_completed_addition_process(
         .iter()
         .map(|res| res.input)
         .sum();
-    let expected_sum = expected_sum * 3; // REMIND ME: Temporary fix until proper secret sharing is implemented
 
     for (index, completed_process) in wait_for_completion_results.iter().enumerate() {
         assert_eq!(
