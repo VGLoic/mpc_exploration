@@ -12,17 +12,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::{
-    Peer,
-    mpc::{Share, recover_secret},
-};
+use crate::Peer;
 
 use super::{ApiError, RouterState};
 
 pub mod repository;
 use repository::AdditionProcessState;
-
-const PRIME: u64 = 1_000_000_007;
 
 pub fn addition_router(server_peer_id: u8) -> Router<RouterState> {
     Router::new()
@@ -119,20 +114,10 @@ async fn receive_share(
             .await
             .map_err(|e| e.context("receiving share for existing process"))?;
 
-        if let AdditionProcessState::AwaitingSumShares = &updated_process.state {
-            let shares_sum = ((*updated_process
-                .input_shares
-                .get(&server_peer_id)
-                .ok_or(anyhow!("unable to find own share"))?
-                as u128
-                + updated_process
-                    .peer_shares
-                    .values()
-                    .map(|&v| v as u128)
-                    .sum::<u128>())
-                % PRIME as u128) as u64;
+        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state {
             if let Err(e) =
-                send_shares_sum_to_peers(process_id, server_peer_id, &state.peers, shares_sum).await
+                send_shares_sum_to_peers(process_id, server_peer_id, &state.peers, *shares_sum)
+                    .await
             {
                 error!("error sending sum shares to peers: {}", e);
             }
@@ -171,19 +156,7 @@ async fn send_sum_share(
         .map_err(|e| e.context("retrieving process before sending sum share"))?;
 
     let shares_sum = match &process.state {
-        AdditionProcessState::AwaitingSumShares => {
-            let own_share = *process
-                .input_shares
-                .get(&server_peer_id)
-                .ok_or(anyhow!("unable to find its own share"))?;
-            ((own_share as u128
-                + process
-                    .peer_shares
-                    .values()
-                    .map(|&v| v as u128)
-                    .sum::<u128>())
-                % PRIME as u128) as u64
-        }
+        AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => *shares_sum,
         _ => {
             return Err(ApiError::BadRequest(
                 "process is not in a state to send sum shares".to_string(),
@@ -202,7 +175,6 @@ async fn receive_shares_sum(
     State(state): State<RouterState>,
     Path(process_id): Path<Uuid>,
     peer: Peer,
-    Extension(server_peer_id): Extension<u8>,
     Json(payload): Json<PeerPayload>,
 ) -> Result<StatusCode, ApiError> {
     let existing_process = state
@@ -213,7 +185,7 @@ async fn receive_shares_sum(
 
     if !matches!(
         existing_process.state,
-        AdditionProcessState::AwaitingSumShares
+        AdditionProcessState::AwaitingPeerSharesSum { .. }
     ) {
         return Err(ApiError::BadRequest(
             "process is not in a state to receive sum shares".to_string(),
@@ -226,29 +198,7 @@ async fn receive_shares_sum(
         .await
         .map_err(|e| e.context("receiving sum share for existing process"))?;
 
-    if let AdditionProcessState::Completed = &updated_process.state {
-        let own_share = *updated_process
-            .input_shares
-            .get(&server_peer_id)
-            .ok_or(anyhow!("unable to find its own share"))?;
-        let own_shares_sum = ((own_share as u128
-            + updated_process
-                .peer_shares
-                .values()
-                .map(|&v| v as u128)
-                .sum::<u128>())
-            % PRIME as u128) as u64;
-        let mut all_shares_sums = vec![Share {
-            point: server_peer_id,
-            value: own_shares_sum,
-        }];
-        for (i, v) in updated_process.peer_shares_sums.iter() {
-            all_shares_sums.push(Share {
-                point: *i,
-                value: *v,
-            });
-        }
-        let final_sum = recover_secret(&all_shares_sums, PRIME)?;
+    if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
         info!(
             "Addition process {} completed with final sum: {}",
             process_id, final_sum
@@ -280,7 +230,6 @@ pub struct GetProcessResponse {
 
 async fn get_process(
     State(state): State<RouterState>,
-    Extension(server_peer_id): Extension<u8>,
     Path(process_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<GetProcessResponse>), ApiError> {
     let process = state
@@ -289,31 +238,7 @@ async fn get_process(
         .await
         .map_err(|e| e.context("retrieving process"))?;
     let sum = match &process.state {
-        AdditionProcessState::Completed => {
-            let own_share = *process
-                .input_shares
-                .get(&server_peer_id)
-                .ok_or(anyhow!("unable to find its own share"))?;
-            let own_shares_sum = ((own_share as u128
-                + process
-                    .peer_shares
-                    .values()
-                    .map(|&v| v as u128)
-                    .sum::<u128>())
-                % PRIME as u128) as u64;
-            let mut all_shares_sums = vec![Share {
-                point: server_peer_id,
-                value: own_shares_sum,
-            }];
-            for (i, v) in process.peer_shares_sums.iter() {
-                all_shares_sums.push(Share {
-                    point: *i,
-                    value: *v,
-                });
-            }
-            let final_sum = recover_secret(&all_shares_sums, PRIME)?;
-            Some(final_sum)
-        }
+        AdditionProcessState::Completed { final_sum } => Some(*final_sum),
         _ => None,
     };
     Ok((

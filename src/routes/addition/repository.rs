@@ -3,7 +3,10 @@ use std::{collections::HashMap, sync::RwLock};
 use anyhow::anyhow;
 use uuid::Uuid;
 
-use crate::{Peer, mpc::split_secret};
+use crate::{
+    Peer,
+    mpc::{Share, recover_secret, split_secret},
+};
 
 #[async_trait::async_trait]
 pub trait AdditionRepository: Send + Sync {
@@ -71,8 +74,8 @@ pub struct AdditionProcess {
 #[derive(Clone)]
 pub enum AdditionProcessState {
     AwaitingPeerShares,
-    AwaitingSumShares,
-    Completed,
+    AwaitingPeerSharesSum { shares_sum: u64 },
+    Completed { final_sum: u64 },
 }
 
 #[derive(Clone)]
@@ -154,7 +157,18 @@ impl AdditionRepository for InMemoryAdditionRepository {
             AdditionProcessState::AwaitingPeerShares => {
                 process.peer_shares.insert(from_peer_id, value);
                 if process.peer_shares.len() == self.peer_ids.len() {
-                    process.state = AdditionProcessState::AwaitingSumShares;
+                    let own_share = process
+                        .input_shares
+                        .get(&self.server_peer_id)
+                        .ok_or(anyhow!("server peer share not found"))?;
+                    let shares_sum: u64 = process
+                        .peer_shares
+                        .values()
+                        .map(|&v| v as u128)
+                        .sum::<u128>()
+                        .wrapping_add(*own_share as u128)
+                        .rem_euclid(PRIME as u128) as u64;
+                    process.state = AdditionProcessState::AwaitingPeerSharesSum { shares_sum };
                 }
             }
             _ => {
@@ -177,10 +191,21 @@ impl AdditionRepository for InMemoryAdditionRepository {
             .get_mut(&process_id)
             .ok_or_else(|| anyhow!("process not found"))?;
         match &mut process.state {
-            AdditionProcessState::AwaitingSumShares => {
+            AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => {
                 process.peer_shares_sums.insert(from_peer_id, value);
                 if process.peer_shares_sums.len() == self.peer_ids.len() {
-                    process.state = AdditionProcessState::Completed;
+                    let mut all_shares_sums = vec![Share {
+                        point: self.server_peer_id,
+                        value: *shares_sum,
+                    }];
+                    for (i, v) in process.peer_shares_sums.iter() {
+                        all_shares_sums.push(Share {
+                            point: *i,
+                            value: *v,
+                        });
+                    }
+                    let final_sum = recover_secret(&all_shares_sums, PRIME)?;
+                    process.state = AdditionProcessState::Completed { final_sum };
                 }
             }
             _ => {
