@@ -190,6 +190,7 @@ impl AdditionRepository for InMemoryAdditionRepository {
         let process = processes
             .get_mut(&process_id)
             .ok_or_else(|| anyhow!("process not found"))?;
+        // REMIND ME: allow reception of sum shares even before all shares are received
         match &mut process.state {
             AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => {
                 process.peer_shares_sums.insert(from_peer_id, value);
