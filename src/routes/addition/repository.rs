@@ -29,7 +29,7 @@ pub trait AdditionRepository: Send + Sync {
         sum_share: Share,
     ) -> Result<AdditionProcess, anyhow::Error>;
 
-    async fn get_completed_sums(&self) -> Result<Vec<u32>, anyhow::Error>;
+    async fn get_completed_sums(&self) -> Result<Vec<u64>, anyhow::Error>;
 
     async fn delete_process(&self, process_id: Uuid) -> Result<(), anyhow::Error>;
 }
@@ -37,7 +37,7 @@ pub trait AdditionRepository: Send + Sync {
 pub struct InMemoryAdditionRepository {
     processes: RwLock<HashMap<Uuid, AdditionProcess>>,
     peer_ids: Vec<u8>,
-    completed_sums: RwLock<Vec<u32>>,
+    completed_sums: RwLock<Vec<u64>>,
 }
 
 impl InMemoryAdditionRepository {
@@ -52,10 +52,10 @@ impl InMemoryAdditionRepository {
 
 #[derive(Clone)]
 pub struct AdditionProcess {
-    pub input: u32,
+    pub input: u64,
     pub own_input_shares: Vec<Share>,
-    pub peer_shares: HashMap<u8, u32>,
-    pub peer_sum_shares: HashMap<u8, u32>,
+    pub peer_shares: HashMap<u8, u64>,
+    pub peer_sum_shares: HashMap<u8, u64>,
     pub state: AdditionProcessState,
 }
 
@@ -68,23 +68,23 @@ pub enum AdditionProcessState {
 
 #[derive(Clone)]
 pub struct AwaitingSumSharesState {
-    pub own_sum_share: u32,
+    pub own_sum_share: u64,
 }
 
 #[derive(Clone)]
 pub struct CompletedAdditionProcess {
-    pub own_sum_share: u32,
-    pub final_sum: u32,
+    pub own_sum_share: u64,
+    pub final_sum: u64,
 }
 
 #[derive(Clone)]
 pub struct Share {
     pub peer_id: u8,
-    pub share: u32,
+    pub share: u64,
 }
 
 impl AdditionProcess {
-    fn new(input: u32, peer_ids: &[u8]) -> Self {
+    fn new(input: u64, peer_ids: &[u8]) -> Self {
         let own_input_shares = peer_ids
             .iter()
             .map(|&peer_id| {
@@ -175,7 +175,7 @@ impl AdditionRepository for InMemoryAdditionRepository {
             AdditionProcessState::AwaitingPeerShares => {
                 process.peer_shares.insert(share.peer_id, share.share);
                 if process.peer_shares.len() == self.peer_ids.len() {
-                    let own_sum_share = process.input + process.peer_shares.values().sum::<u32>();
+                    let own_sum_share = process.input + process.peer_shares.values().sum::<u64>();
                     process.state =
                         AdditionProcessState::AwaitingSumShares(AwaitingSumSharesState {
                             own_sum_share,
@@ -206,8 +206,8 @@ impl AdditionRepository for InMemoryAdditionRepository {
                     .peer_sum_shares
                     .insert(sum_share.peer_id, sum_share.share);
                 if process.peer_sum_shares.len() == self.peer_ids.len() {
-                    let final_sum: u32 =
-                        state.own_sum_share + process.peer_sum_shares.values().sum::<u32>();
+                    let final_sum: u64 =
+                        state.own_sum_share + process.peer_sum_shares.values().sum::<u64>();
                     process.state = AdditionProcessState::Completed(CompletedAdditionProcess {
                         own_sum_share: state.own_sum_share,
                         final_sum,
@@ -225,7 +225,7 @@ impl AdditionRepository for InMemoryAdditionRepository {
         Ok(process.clone())
     }
 
-    async fn get_completed_sums(&self) -> Result<Vec<u32>, anyhow::Error> {
+    async fn get_completed_sums(&self) -> Result<Vec<u64>, anyhow::Error> {
         let completed_sums = self.completed_sums.read().map_err(|e| {
             anyhow!("{e}").context("failed to acquire read lock on getting completed sums")
         })?;

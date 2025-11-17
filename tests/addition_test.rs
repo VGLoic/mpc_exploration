@@ -77,7 +77,7 @@ async fn assert_completed_addition_process(
         .map(|res| res.unwrap())
         .collect();
 
-    let expected_sum: u32 = wait_for_completion_results
+    let expected_sum: u64 = wait_for_completion_results
         .iter()
         .map(|res| res.input)
         .sum();
@@ -94,8 +94,8 @@ async fn assert_completed_addition_process(
 }
 
 struct CompletedAdditionProcess {
-    input: u32,
-    sum: u32,
+    input: u64,
+    sum: u64,
 }
 async fn wait_for_completed_addition_process(
     client: &reqwest::Client,

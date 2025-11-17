@@ -40,7 +40,7 @@ pub fn addition_router(server_peer_id: u8) -> Router<RouterState> {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreatedProcessResponse {
     pub process_id: Uuid,
-    pub input: u32,
+    pub input: u64,
 }
 #[axum::debug_handler]
 async fn create_process(
@@ -288,8 +288,8 @@ async fn delete_process(
 #[derive(serde::Serialize, Deserialize)]
 pub struct GetProcessResponse {
     pub process_id: Uuid,
-    pub input: u32,
-    pub sum: Option<u32>,
+    pub input: u64,
+    pub sum: Option<u64>,
 }
 
 async fn get_process(
@@ -317,7 +317,7 @@ async fn get_process(
 
 #[derive(Deserialize, Serialize)]
 struct SharePayload {
-    share: u32,
+    share: u64,
 }
 
 async fn send_shares_to_peers(
