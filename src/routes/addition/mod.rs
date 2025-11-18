@@ -263,7 +263,7 @@ async fn get_process(
     ))
 }
 
-// REMIND ME: improve connections to peers
+// TODO: improve connections to peers
 
 #[derive(Deserialize, Serialize)]
 struct PeerPayload {
