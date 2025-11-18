@@ -18,6 +18,8 @@ WORKDIR /app
 
 # Install host build dependencies.
 RUN apk add --no-cache clang lld musl-dev git
+# Add OpenSSL dev libraries for building crates that depend on OpenSSL, e.g., reqwest.
+RUN apk add --no-cache openssl-dev openssl-libs-static
 
 # Build the application.
 # Leverage a cache mount to /usr/local/cargo/registry/

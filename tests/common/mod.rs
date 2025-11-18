@@ -1,33 +1,45 @@
 use std::net::SocketAddr;
 
-use mpc_exploration::{Config, app_router};
+use mpc_exploration::{Config, Peer, routes::app_router};
 use tower_http::trace::TraceLayer;
 use tracing::{Level, info, level_filters::LevelFilter};
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[allow(dead_code)]
-pub struct TestState {
+pub struct InstanceState {
     pub server_url: String,
 }
 
-pub async fn setup() -> Result<TestState, anyhow::Error> {
-    let _ = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(LevelFilter::TRACE))
-        .try_init();
-
-    let config = Config {
+#[allow(dead_code)]
+pub fn default_test_config() -> Config {
+    Config {
         port: 0,
-        log_level: Level::TRACE,
-    };
+        log_level: Level::WARN,
+        server_peer_id: 1,
+        peers: vec![
+            Peer::new(2, "http://localhost:3001".to_string()),
+            Peer::new(3, "http://localhost:3002".to_string()),
+        ],
+    }
+}
+
+pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Error> {
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(LevelFilter::from_level(config.log_level)),
+        )
+        .try_init();
 
     let app = app_router(&config).layer(TraceLayer::new_for_http());
 
-    // Giving 0 as port here will let the system dynamically find an available port
-    // This is needed in order to let our test run in parallel
-    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-    let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|err| {
-        anyhow::anyhow!("Failed to bind the TCP listener to address {addr}: {err}")
-    })?;
+    let listener = if config.port == 0 {
+        bind_listener_to_free_port().await?
+    } else {
+        let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
+        tokio::net::TcpListener::bind(&addr).await.map_err(|err| {
+            anyhow::anyhow!("Failed to bind the TCP listener to address {addr}: {err}")
+        })?
+    };
 
     let addr = listener.local_addr().unwrap();
 
@@ -36,7 +48,20 @@ pub async fn setup() -> Result<TestState, anyhow::Error> {
     // Start a server, the handle is kept in order to abort it if needed
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    Ok(TestState {
+    Ok(InstanceState {
         server_url: format!("http://{}:{}", addr.ip(), addr.port()),
     })
+}
+
+async fn bind_listener_to_free_port() -> Result<tokio::net::TcpListener, anyhow::Error> {
+    for port in 51_000..60_000 {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(_) => continue,
+        }
+    }
+    Err(anyhow::anyhow!(
+        "No free port found in the range 51000-60000"
+    ))
 }

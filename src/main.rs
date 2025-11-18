@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderName, Response},
 };
 use dotenvy::dotenv;
-use mpc_exploration::{Config, app_router};
+use mpc_exploration::{Config, routes::app_router};
 use tokio::signal;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
