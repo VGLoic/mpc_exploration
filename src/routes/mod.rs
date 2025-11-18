@@ -10,30 +10,34 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-use crate::{Config, Peer, routes::addition::repository::AdditionRepository};
+use crate::{
+    Config, Peer, communication::PeerCommunication,
+    routes::addition::repository::AdditionRepository,
+};
 
 pub mod addition;
 
 #[derive(Clone)]
 pub struct RouterState {
     addition: Arc<dyn AdditionRepository>,
+    peer_communication: Arc<dyn PeerCommunication>,
     peers: Vec<Peer>,
+    server_peer_id: u8,
 }
 
-pub fn app_router(config: &Config) -> Router {
+pub fn app_router(config: &Config, peer_communication: impl PeerCommunication + 'static) -> Router {
     let state = RouterState {
         addition: Arc::new(addition::repository::InMemoryAdditionRepository::new(
             &config.peers,
             config.server_peer_id,
         )),
+        peer_communication: Arc::new(peer_communication),
         peers: config.peers.clone(),
+        server_peer_id: config.server_peer_id,
     };
     Router::new()
         .route("/health", get(get_healthcheck))
-        .nest(
-            "/additions",
-            addition::addition_router(config.server_peer_id),
-        )
+        .nest("/additions", addition::addition_router())
         .fallback(not_found_handler)
         .with_state(state)
 }

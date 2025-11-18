@@ -4,6 +4,7 @@ use std::{
 };
 use tracing::Level;
 
+pub mod communication;
 mod mpc;
 pub mod routes;
 

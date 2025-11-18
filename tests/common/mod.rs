@@ -30,7 +30,12 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         )
         .try_init();
 
-    let app = app_router(&config).layer(TraceLayer::new_for_http());
+    let peer_communication = mpc_exploration::communication::HttpPeerCommunication::new(
+        config.server_peer_id,
+        &config.peers,
+    );
+
+    let app = app_router(&config, peer_communication).layer(TraceLayer::new_for_http());
 
     let listener = if config.port == 0 {
         bind_listener_to_free_port().await?

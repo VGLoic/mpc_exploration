@@ -44,7 +44,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let x_request_id = HeaderName::from_static(REQUEST_ID_HEADER);
 
-    let app = app_router(&config).layer((
+    let peer_communication = mpc_exploration::communication::HttpPeerCommunication::new(
+        config.server_peer_id,
+        &config.peers,
+    );
+
+    let app = app_router(&config, peer_communication).layer((
         // Set `x-request-id` header for every request
         SetRequestIdLayer::new(x_request_id.clone(), MakeRequestUuid),
         // Log request and response
