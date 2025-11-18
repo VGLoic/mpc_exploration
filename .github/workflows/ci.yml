@@ -53,11 +53,7 @@ jobs:
               with:
                 toolchain: stable
                 override: true
-            - name: Run integration test script
-              run: |
-                chmod +x scripts/integration-test.sh
-                ./scripts/integration-test.sh
-              shell: bash
+            - run: cargo test --tests
     build:
         runs-on: ubuntu-latest
         name: Build
