@@ -114,13 +114,12 @@ async fn receive_share(
             .await
             .map_err(|e| e.context("receiving share for existing process"))?;
 
-        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state {
-            if let Err(e) =
+        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state
+            && let Err(e) =
                 send_shares_sum_to_peers(process_id, server_peer_id, &state.peers, *shares_sum)
                     .await
-            {
-                error!("error sending sum shares to peers: {}", e);
-            }
+        {
+            error!("error sending sum shares to peers: {}", e);
         }
     } else {
         let process = state
@@ -175,34 +174,47 @@ async fn receive_shares_sum(
     State(state): State<RouterState>,
     Path(process_id): Path<Uuid>,
     peer: Peer,
+    Extension(server_peer_id): Extension<u8>,
     Json(payload): Json<PeerPayload>,
 ) -> Result<StatusCode, ApiError> {
-    let existing_process = state
-        .addition
-        .get_process(process_id)
+    if let Ok(existing_process) = state.addition.get_process(process_id).await {
+        if !matches!(
+            existing_process.state,
+            AdditionProcessState::AwaitingPeerSharesSum { .. }
+        ) {
+            return Err(ApiError::BadRequest(
+                "process is not in a state to receive sum shares".to_string(),
+            ));
+        }
+
+        let updated_process = state
+            .addition
+            .receive_shares_sum(process_id, peer.id, payload.value)
+            .await
+            .map_err(|e| e.context("receiving sum share for existing process"))?;
+
+        if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
+            info!(
+                "Addition process {} completed with final sum: {}",
+                process_id, final_sum
+            );
+        }
+    } else {
+        let process = state
+            .addition
+            .receive_new_process_shares_sum(process_id, peer.id, payload.value)
+            .await
+            .map_err(|e| e.context("creating process after sum share reception"))?;
+        if let Err(e) = send_shares_to_peers(
+            process_id,
+            server_peer_id,
+            &state.peers,
+            process.input_shares,
+        )
         .await
-        .map_err(|e| e.context("retrieving process before receiving sum share"))?;
-
-    if !matches!(
-        existing_process.state,
-        AdditionProcessState::AwaitingPeerSharesSum { .. }
-    ) {
-        return Err(ApiError::BadRequest(
-            "process is not in a state to receive sum shares".to_string(),
-        ));
-    }
-
-    let updated_process = state
-        .addition
-        .receive_shares_sum(process_id, peer.id, payload.value)
-        .await
-        .map_err(|e| e.context("receiving sum share for existing process"))?;
-
-    if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
-        info!(
-            "Addition process {} completed with final sum: {}",
-            process_id, final_sum
-        );
+        {
+            error!("error sending shares to peers: {}", e);
+        }
     }
 
     Ok(StatusCode::OK)

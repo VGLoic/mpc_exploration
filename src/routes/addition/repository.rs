@@ -28,6 +28,13 @@ pub trait AdditionRepository: Send + Sync {
         value: u64,
     ) -> Result<AdditionProcess, anyhow::Error>;
 
+    async fn receive_new_process_shares_sum(
+        &self,
+        process_id: Uuid,
+        from_peer_id: u8,
+        value: u64,
+    ) -> Result<AdditionProcess, anyhow::Error>;
+
     async fn receive_shares_sum(
         &self,
         process_id: Uuid,
@@ -178,6 +185,33 @@ impl AdditionRepository for InMemoryAdditionRepository {
         Ok(process.clone())
     }
 
+    async fn receive_new_process_shares_sum(
+        &self,
+        process_id: Uuid,
+        from_peer_id: u8,
+        value: u64,
+    ) -> Result<AdditionProcess, anyhow::Error> {
+        let mut processes = self.processes.write().map_err(|e| {
+            anyhow!("{e}").context("failed to acquire write lock on receiving sum share")
+        })?;
+
+        let input = rand::random::<u16>().into();
+        let input_shares = split_secret(input, &self.all_ids(), PRIME);
+
+        let mut peer_shares_sums = HashMap::new();
+        peer_shares_sums.insert(from_peer_id, value);
+        let process = AdditionProcess {
+            input,
+            input_shares,
+            peer_shares: HashMap::new(),
+            peer_shares_sums,
+            state: AdditionProcessState::AwaitingPeerShares,
+        };
+        processes.insert(process_id, process.clone());
+
+        Ok(process.clone())
+    }
+
     async fn receive_shares_sum(
         &self,
         process_id: Uuid,
@@ -190,29 +224,25 @@ impl AdditionRepository for InMemoryAdditionRepository {
         let process = processes
             .get_mut(&process_id)
             .ok_or_else(|| anyhow!("process not found"))?;
-        // REMIND ME: allow reception of sum shares even before all shares are received
-        match &mut process.state {
-            AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => {
-                process.peer_shares_sums.insert(from_peer_id, value);
-                if process.peer_shares_sums.len() == self.peer_ids.len() {
-                    let mut all_shares_sums = vec![Share {
-                        point: self.server_peer_id,
-                        value: *shares_sum,
-                    }];
-                    for (i, v) in process.peer_shares_sums.iter() {
-                        all_shares_sums.push(Share {
-                            point: *i,
-                            value: *v,
-                        });
-                    }
-                    let final_sum = recover_secret(&all_shares_sums, PRIME)?;
-                    process.state = AdditionProcessState::Completed { final_sum };
-                }
+        process.peer_shares_sums.insert(from_peer_id, value);
+
+        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &process.state
+            && process.peer_shares_sums.len() == self.peer_ids.len()
+        {
+            let mut all_shares_sums = vec![Share {
+                point: self.server_peer_id,
+                value: *shares_sum,
+            }];
+            for (i, v) in process.peer_shares_sums.iter() {
+                all_shares_sums.push(Share {
+                    point: *i,
+                    value: *v,
+                });
             }
-            _ => {
-                return Err(anyhow!("invalid state for receiving sum share"));
-            }
+            let final_sum = recover_secret(&all_shares_sums, PRIME)?;
+            process.state = AdditionProcessState::Completed { final_sum };
         }
+
         Ok(process.clone())
     }
 
