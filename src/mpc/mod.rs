@@ -34,3 +34,26 @@ pub fn recover_secret(shares: &[Share], n: u64) -> Result<u64, anyhow::Error> {
 
     Ok(poly.evaluate_at_zero())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_secret_sharing() {
+        let n = 1_000_000_007;
+        let secret = rand::random::<u64>() % n;
+        let points_len = rand::random::<u8>() % 100 + 3; // at least 3 points
+        let points = (1..=points_len).collect::<Vec<u8>>();
+        let shares = split_secret(secret, &points, n);
+        let share_vec: Vec<Share> = shares
+            .iter()
+            .map(|(k, v)| Share {
+                point: *k,
+                value: *v,
+            })
+            .collect();
+        let recovered_secret = recover_secret(&share_vec, n).unwrap();
+        assert_eq!(secret, recovered_secret);
+    }
+}

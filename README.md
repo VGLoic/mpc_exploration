@@ -2,6 +2,10 @@
 
 This repository is an exploration of multi-party computation (MPC) techniques and their applications. The goal is to experiment with different MPC protocols, libraries, and use cases to better understand their capabilities and limitations.
 
+## Current features
+
+- Addition protocol using Shamir secret sharing.
+
 ## Local development
 
 To get started with local development, you'll need to set up your environment. Follow these steps:
@@ -30,6 +34,13 @@ To get started with local development, you'll need to set up your environment. F
     ```bash
     cargo run .
     ```
+
+### Unit tests
+
+Unit tests can be run:
+```bash
+cargo test --lib
+```
 
 ### Integration tests
 
