@@ -4,7 +4,17 @@ This repository is an exploration of multi-party computation (MPC) techniques an
 
 ## Current features
 
-- Addition protocol using Shamir secret sharing.
+### Addition protocol
+
+A simple addition protocol has been implemented using Shamir secret sharing. This protocol allows multiple parties to securely compute the sum of their private inputs without revealing them to each other.
+
+A process is initiated by a server peer, it generates a random input and shares it with other peers.
+
+Reception of a share from a peer triggers the generation of a new random input, which is then shared with all other peers.
+
+This protocol assumes for now that all peers are honest and follow the protocol correctly.
+
+See the associated [integration test](./tests/addition_test.rs) for a running example.
 
 ## Local development
 
