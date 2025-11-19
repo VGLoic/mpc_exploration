@@ -1,9 +1,5 @@
-use std::collections::HashMap;
-
-use ::futures::{StreamExt, stream};
-use anyhow::anyhow;
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{delete, get, post},
@@ -12,23 +8,24 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::Peer;
+use crate::{
+    Peer,
+    communication::{PeerMessage, PeerMessagePayload},
+};
 
 use super::{ApiError, RouterState};
 
 pub mod repository;
 use repository::AdditionProcessState;
 
-pub fn addition_router(server_peer_id: u8) -> Router<RouterState> {
+pub fn addition_router() -> Router<RouterState> {
     Router::new()
         .route("/", post(create_process))
         .route("/{id}/send-share", post(send_share))
-        .route("/{id}/receive-share", post(receive_share))
         .route("/{id}/send-sum-share", post(send_sum_share))
-        .route("/{id}/receive-shares-sum", post(receive_shares_sum))
         .route("/{id}", delete(delete_process))
         .route("/{id}", get(get_process))
-        .layer(Extension(server_peer_id))
+        .route("/{id}/receive", post(receive_peer_message))
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -38,7 +35,6 @@ pub struct CreatedProcessResponse {
 }
 async fn create_process(
     State(state): State<RouterState>,
-    Extension(server_peer_id): Extension<u8>,
 ) -> Result<(StatusCode, Json<CreatedProcessResponse>), ApiError> {
     let process_id = Uuid::new_v4();
 
@@ -50,14 +46,13 @@ async fn create_process(
 
     info!("addition process created");
 
-    if let Err(e) = send_shares_to_peers(
-        process_id,
-        server_peer_id,
-        &state.peers,
-        created_process.input_shares,
-    )
-    .await
-    {
+    let peer_messages = created_process
+        .input_shares
+        .iter()
+        .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+        .filter(|message| message.peer_id != state.server_peer_id)
+        .collect::<Vec<_>>();
+    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending initial shares to peers: {}", e);
     }
 
@@ -73,7 +68,6 @@ async fn create_process(
 async fn send_share(
     State(state): State<RouterState>,
     Path(id): Path<Uuid>,
-    Extension(server_peer_id): Extension<u8>,
 ) -> Result<StatusCode, ApiError> {
     let process = state
         .addition
@@ -81,63 +75,14 @@ async fn send_share(
         .await
         .map_err(|e| e.context("retrieving process before sending share"))?;
 
-    if let Err(e) =
-        send_shares_to_peers(id, server_peer_id, &state.peers, process.input_shares).await
-    {
+    let peer_messages = process
+        .input_shares
+        .iter()
+        .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, id, value))
+        .filter(|message| message.peer_id != state.server_peer_id)
+        .collect::<Vec<_>>();
+    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending shares to peers: {}", e);
-    }
-
-    Ok(StatusCode::OK)
-}
-
-async fn receive_share(
-    State(state): State<RouterState>,
-    Path(process_id): Path<Uuid>,
-    peer: Peer,
-    Extension(server_peer_id): Extension<u8>,
-    Json(payload): Json<PeerPayload>,
-) -> Result<StatusCode, ApiError> {
-    println!("Received share from peer id {}", peer.id);
-
-    if let Ok(existing_process) = state.addition.get_process(process_id).await {
-        if !matches!(
-            existing_process.state,
-            AdditionProcessState::AwaitingPeerShares
-        ) {
-            return Err(ApiError::BadRequest(
-                "process is not in a state to receive shares".to_string(),
-            ));
-        }
-        let updated_process = state
-            .addition
-            .receive_share(process_id, peer.id, payload.value)
-            .await
-            .map_err(|e| e.context("receiving share for existing process"))?;
-
-        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state
-            && let Err(e) =
-                send_shares_sum_to_peers(process_id, server_peer_id, &state.peers, *shares_sum)
-                    .await
-        {
-            error!("error sending sum shares to peers: {}", e);
-        }
-    } else {
-        let process = state
-            .addition
-            .receive_new_process_share(process_id, peer.id, payload.value)
-            .await
-            .map_err(|e| e.context("creating process after share reception"))?;
-
-        if let Err(e) = send_shares_to_peers(
-            process_id,
-            server_peer_id,
-            &state.peers,
-            process.input_shares,
-        )
-        .await
-        {
-            error!("error sending shares to peers: {}", e);
-        }
     }
 
     Ok(StatusCode::OK)
@@ -145,12 +90,11 @@ async fn receive_share(
 
 async fn send_sum_share(
     State(state): State<RouterState>,
-    Path(id): Path<Uuid>,
-    Extension(server_peer_id): Extension<u8>,
+    Path(process_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let process = state
         .addition
-        .get_process(id)
+        .get_process(process_id)
         .await
         .map_err(|e| e.context("retrieving process before sending sum share"))?;
 
@@ -163,58 +107,13 @@ async fn send_sum_share(
         }
     };
 
-    if let Err(e) = send_shares_sum_to_peers(id, server_peer_id, &state.peers, shares_sum).await {
+    let peer_messages = state
+        .peers
+        .iter()
+        .map(|peer| PeerMessage::new_shares_sum_message(peer.id, process_id, shares_sum))
+        .collect::<Vec<_>>();
+    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending sum shares to peers: {}", e);
-    }
-
-    Ok(StatusCode::OK)
-}
-
-async fn receive_shares_sum(
-    State(state): State<RouterState>,
-    Path(process_id): Path<Uuid>,
-    peer: Peer,
-    Extension(server_peer_id): Extension<u8>,
-    Json(payload): Json<PeerPayload>,
-) -> Result<StatusCode, ApiError> {
-    if let Ok(existing_process) = state.addition.get_process(process_id).await {
-        if !matches!(
-            existing_process.state,
-            AdditionProcessState::AwaitingPeerSharesSum { .. }
-        ) {
-            return Err(ApiError::BadRequest(
-                "process is not in a state to receive sum shares".to_string(),
-            ));
-        }
-
-        let updated_process = state
-            .addition
-            .receive_shares_sum(process_id, peer.id, payload.value)
-            .await
-            .map_err(|e| e.context("receiving sum share for existing process"))?;
-
-        if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
-            info!(
-                "Addition process {} completed with final sum: {}",
-                process_id, final_sum
-            );
-        }
-    } else {
-        let process = state
-            .addition
-            .receive_new_process_shares_sum(process_id, peer.id, payload.value)
-            .await
-            .map_err(|e| e.context("creating process after sum share reception"))?;
-        if let Err(e) = send_shares_to_peers(
-            process_id,
-            server_peer_id,
-            &state.peers,
-            process.input_shares,
-        )
-        .await
-        {
-            error!("error sending shares to peers: {}", e);
-        }
     }
 
     Ok(StatusCode::OK)
@@ -233,7 +132,7 @@ async fn delete_process(
     Ok(StatusCode::OK)
 }
 
-#[derive(serde::Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GetProcessResponse {
     pub process_id: Uuid,
     pub input: u64,
@@ -263,113 +162,115 @@ async fn get_process(
     ))
 }
 
-// TODO: improve connections to peers
+async fn receive_peer_message(
+    State(state): State<RouterState>,
+    Path(process_id): Path<Uuid>,
+    peer: Peer,
+    Json(payload): Json<PeerMessagePayload>,
+) -> Result<StatusCode, ApiError> {
+    match payload {
+        PeerMessagePayload::Share { value } => receive_share(state, process_id, peer, value).await,
+        PeerMessagePayload::SharesSum { value } => {
+            receive_shares_sum(state, process_id, peer, value).await
+        }
+    }
+}
 
-#[derive(Deserialize, Serialize)]
-struct PeerPayload {
+async fn receive_share(
+    state: RouterState,
+    process_id: Uuid,
+    peer: Peer,
     value: u64,
-}
-async fn send_shares_to_peers(
-    process_id: Uuid,
-    sender_peer_id: u8,
-    peers: &[Peer],
-    shares: HashMap<u8, u64>,
-) -> Result<(), anyhow::Error> {
-    let client = reqwest::Client::new();
+) -> Result<StatusCode, ApiError> {
+    println!("Received share from peer id {}", peer.id);
 
-    let mut peer_payloads = Vec::with_capacity(peers.len());
-    for peer in peers {
-        let url = format!("{}/additions/{process_id}/receive-share", peer.url);
-        let value = *shares
-            // The peer ID is equal to the point at which the polynomial is evaluated
-            .get(&peer.id)
-            .ok_or(anyhow!("share for peer id {} not found", peer.id))?;
-        let payload = PeerPayload { value };
-        peer_payloads.push((url, payload));
+    if let Ok(existing_process) = state.addition.get_process(process_id).await {
+        if !matches!(
+            existing_process.state,
+            AdditionProcessState::AwaitingPeerShares
+        ) {
+            return Err(ApiError::BadRequest(
+                "process is not in a state to receive shares".to_string(),
+            ));
+        }
+        let updated_process = state
+            .addition
+            .receive_share(process_id, peer.id, value)
+            .await
+            .map_err(|e| e.context("receiving share for existing process"))?;
+
+        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state
+            && let Err(e) = state
+                .peer_communication
+                .send_messages(
+                    state
+                        .peers
+                        .iter()
+                        .map(|peer| {
+                            PeerMessage::new_shares_sum_message(peer.id, process_id, *shares_sum)
+                        })
+                        .collect(),
+                )
+                .await
+        {
+            error!("error sending sum shares to peers: {}", e);
+        }
+    } else {
+        let process = state
+            .addition
+            .receive_new_process_share(process_id, peer.id, value)
+            .await
+            .map_err(|e| e.context("creating process after share reception"))?;
+
+        let peer_messages = process
+            .input_shares
+            .iter()
+            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+            .filter(|message| message.peer_id != state.server_peer_id)
+            .collect::<Vec<_>>();
+        if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+            error!("error sending shares to peers: {}", e);
+        }
     }
 
-    let bodies = stream::iter(peer_payloads)
-        .map(|(url, payload)| {
-            let client = &client;
-            async move {
-                let res = client
-                    .post(&url)
-                    .header("X-PEER-ID", sender_peer_id.to_string())
-                    .json(&payload)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        anyhow!("{e}").context(format!("sending share to peer URL: {}", url))
-                    })?;
-                if res.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("Failed to send share: {}", res.status()))
-                }
-            }
-        })
-        .buffer_unordered(2);
-
-    bodies
-        .for_each(|result: Result<(), anyhow::Error>| async {
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("Error sending share: {}", e);
-                }
-            }
-        })
-        .await;
-
-    Ok(())
+    Ok(StatusCode::OK)
 }
-async fn send_shares_sum_to_peers(
-    process_id: Uuid,
-    sender_peer_id: u8,
-    peers: &[Peer],
-    shares_sum: u64,
-) -> Result<(), anyhow::Error> {
-    let client = reqwest::Client::new();
 
-    let mut peer_payloads = Vec::with_capacity(peers.len());
-    for peer in peers {
-        let url = format!("{}/additions/{process_id}/receive-shares-sum", peer.url);
-        let payload = PeerPayload { value: shares_sum };
-        peer_payloads.push((url, payload));
+async fn receive_shares_sum(
+    state: RouterState,
+    process_id: Uuid,
+    peer: Peer,
+    value: u64,
+) -> Result<StatusCode, ApiError> {
+    if state.addition.get_process(process_id).await.is_ok() {
+        let updated_process = state
+            .addition
+            .receive_shares_sum(process_id, peer.id, value)
+            .await
+            .map_err(|e| e.context("receiving sum share for existing process"))?;
+
+        if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
+            info!(
+                "Addition process {} completed with final sum: {}",
+                process_id, final_sum
+            );
+        }
+    } else {
+        let process = state
+            .addition
+            .receive_new_process_shares_sum(process_id, peer.id, value)
+            .await
+            .map_err(|e| e.context("creating process after sum share reception"))?;
+        let peer_messages = process
+            .input_shares
+            .iter()
+            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+            .filter(|message| message.peer_id != state.server_peer_id)
+            .collect::<Vec<_>>();
+        if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+            error!("error sending shares to peers: {}", e);
+        }
     }
 
-    let bodies = stream::iter(peer_payloads)
-        .map(|(url, payload)| {
-            let client = &client;
-            async move {
-                let res = client
-                    .post(&url)
-                    .header("X-PEER-ID", sender_peer_id.to_string())
-                    .json(&payload)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        anyhow!("{e}").context(format!("sending share to peer URL: {}", url))
-                    })?;
-                if res.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("Failed to send share: {}", res.status()))
-                }
-            }
-        })
-        .buffer_unordered(2);
-
-    bodies
-        .for_each(|result: Result<(), anyhow::Error>| async {
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("Error sending share: {}", e);
-                }
-            }
-        })
-        .await;
-
-    Ok(())
+    Ok(StatusCode::OK)
 }
