@@ -49,13 +49,8 @@ async fn create_process(
     let peer_messages = created_process
         .input_shares
         .iter()
-        .map(|(&peer_id, &value)| {
-            (
-                peer_id,
-                crate::communication::PeerMessage::new_share_message(process_id, value),
-            )
-        })
-        .filter(|(peer_id, _)| *peer_id != state.server_peer_id)
+        .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+        .filter(|message| message.peer_id != state.server_peer_id)
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending initial shares to peers: {}", e);
@@ -83,13 +78,8 @@ async fn send_share(
     let peer_messages = process
         .input_shares
         .iter()
-        .map(|(&peer_id, &value)| {
-            (
-                peer_id,
-                crate::communication::PeerMessage::new_share_message(id, value),
-            )
-        })
-        .filter(|(peer_id, _)| *peer_id != state.server_peer_id)
+        .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, id, value))
+        .filter(|message| message.peer_id != state.server_peer_id)
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending shares to peers: {}", e);
@@ -120,12 +110,7 @@ async fn send_sum_share(
     let peer_messages = state
         .peers
         .iter()
-        .map(|peer| {
-            (
-                peer.id,
-                crate::communication::PeerMessage::new_shares_sum_message(process_id, shares_sum),
-            )
-        })
+        .map(|peer| PeerMessage::new_shares_sum_message(peer.id, process_id, shares_sum))
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending sum shares to peers: {}", e);
@@ -147,7 +132,7 @@ async fn delete_process(
     Ok(StatusCode::OK)
 }
 
-#[derive(serde::Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GetProcessResponse {
     pub process_id: Uuid,
     pub input: u64,
@@ -222,10 +207,7 @@ async fn receive_share(
                         .peers
                         .iter()
                         .map(|peer| {
-                            (
-                                peer.id,
-                                PeerMessage::new_shares_sum_message(process_id, *shares_sum),
-                            )
+                            PeerMessage::new_shares_sum_message(peer.id, process_id, *shares_sum)
                         })
                         .collect(),
                 )
@@ -243,13 +225,8 @@ async fn receive_share(
         let peer_messages = process
             .input_shares
             .iter()
-            .map(|(&peer_id, &value)| {
-                (
-                    peer_id,
-                    crate::communication::PeerMessage::new_share_message(process_id, value),
-                )
-            })
-            .filter(|(peer_id, _)| *peer_id != state.server_peer_id)
+            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+            .filter(|message| message.peer_id != state.server_peer_id)
             .collect::<Vec<_>>();
         if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
             error!("error sending shares to peers: {}", e);
@@ -265,16 +242,7 @@ async fn receive_shares_sum(
     peer: Peer,
     value: u64,
 ) -> Result<StatusCode, ApiError> {
-    if let Ok(existing_process) = state.addition.get_process(process_id).await {
-        if !matches!(
-            existing_process.state,
-            AdditionProcessState::AwaitingPeerSharesSum { .. }
-        ) {
-            return Err(ApiError::BadRequest(
-                "process is not in a state to receive sum shares".to_string(),
-            ));
-        }
-
+    if state.addition.get_process(process_id).await.is_ok() {
         let updated_process = state
             .addition
             .receive_shares_sum(process_id, peer.id, value)
@@ -296,13 +264,8 @@ async fn receive_shares_sum(
         let peer_messages = process
             .input_shares
             .iter()
-            .map(|(&peer_id, &value)| {
-                (
-                    peer_id,
-                    crate::communication::PeerMessage::new_share_message(process_id, value),
-                )
-            })
-            .filter(|(peer_id, _)| *peer_id != state.server_peer_id)
+            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
+            .filter(|message| message.peer_id != state.server_peer_id)
             .collect::<Vec<_>>();
         if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
             error!("error sending shares to peers: {}", e);

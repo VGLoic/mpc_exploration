@@ -1,8 +1,13 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
-use mpc_exploration::{Config, Peer, routes::app_router};
+use axum::{
+    body::Body,
+    extract::{MatchedPath, Request},
+    http::Response,
+};
+use mpc_exploration::{Config, Peer, communication::setup_peer_communication, routes::app_router};
 use tower_http::trace::TraceLayer;
-use tracing::{Level, info, level_filters::LevelFilter};
+use tracing::{Level, Span, error, info, info_span, level_filters::LevelFilter};
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[allow(dead_code)]
@@ -30,12 +35,38 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         )
         .try_init();
 
-    let peer_communication = mpc_exploration::communication::HttpPeerCommunication::new(
-        config.server_peer_id,
-        &config.peers,
-    );
+    let (peer_communication, mut peer_communication_manager) =
+        setup_peer_communication(config.server_peer_id, &config.peers);
+    tokio::spawn(async move {
+        if let Err(e) = peer_communication_manager.run().await {
+            tracing::error!("Peer communication manager encountered an error: {}", e);
+        }
+    });
 
-    let app = app_router(&config, peer_communication).layer(TraceLayer::new_for_http());
+    let app = app_router(&config, peer_communication).layer(
+        TraceLayer::new_for_http()
+            .make_span_with(|request: &Request<_>| {
+                let matched_path = request
+                    .extensions()
+                    .get::<MatchedPath>()
+                    .map(MatchedPath::as_str);
+
+                info_span!(
+                    "http_request",
+                    method = ?request.method(),
+                    matched_path,
+                )
+            })
+            .on_response(
+                |response: &Response<Body>, latency: Duration, _span: &Span| {
+                    if response.status().is_server_error() {
+                        error!("response: {} {latency:?}", response.status())
+                    } else {
+                        info!("response: {} {latency:?}", response.status())
+                    }
+                },
+            ),
+    );
 
     let listener = if config.port == 0 {
         bind_listener_to_free_port().await?

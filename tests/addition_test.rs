@@ -10,27 +10,29 @@ use tracing::Level;
 
 #[tokio::test]
 async fn test_addition_single_process() {
+    let log_level = Level::WARN;
+
     let peer_1 = Peer::new(1, "http://localhost:50001".to_string());
     let peer_2 = Peer::new(2, "http://localhost:50002".to_string());
     let peer_3 = Peer::new(3, "http://localhost:50003".to_string());
 
     let config_1 = Config {
         port: 50001,
-        log_level: Level::WARN,
+        log_level,
         server_peer_id: 1,
         peers: vec![peer_2.clone(), peer_3.clone()],
     };
     let instance_1 = setup_instance(config_1).await.unwrap();
     let config_2 = Config {
         port: 50002,
-        log_level: Level::WARN,
+        log_level,
         server_peer_id: 2,
         peers: vec![peer_1.clone(), peer_3.clone()],
     };
     let instance_2 = setup_instance(config_2).await.unwrap();
     let config_3 = Config {
         port: 50003,
-        log_level: Level::WARN,
+        log_level,
         server_peer_id: 3,
         peers: vec![peer_1.clone(), peer_2.clone()],
     };
@@ -101,15 +103,16 @@ async fn wait_for_completed_addition_process(
     instance: &common::InstanceState,
     process_id: uuid::Uuid,
 ) -> Result<CompletedAdditionProcess, anyhow::Error> {
-    let mut safe_counter = 0;
+    let mut safe_counter: i32 = 0;
     loop {
-        let process = client
+        if let Ok(process) = client
             .get(format!("{}/additions/{}", &instance.server_url, process_id))
             .send()
             .await?
             .json::<GetProcessResponse>()
-            .await?;
-        if let Some(sum) = process.sum {
+            .await
+            && let Some(sum) = process.sum
+        {
             return Ok(CompletedAdditionProcess {
                 input: process.input,
                 sum,
