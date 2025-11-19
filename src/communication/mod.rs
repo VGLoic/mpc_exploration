@@ -82,7 +82,7 @@ pub enum PeerMessagePayload {
     SharesSum { value: u64 },
 }
 
-pub struct HttpPeerCommunication {
+pub struct MpscPeerCommunication {
     server_peer_id: u8,
     peer_urls: HashMap<u8, String>,
     tx: mpsc::Sender<PeerEnvelope>,
@@ -97,7 +97,7 @@ pub struct PeerCommunicationManager {
 pub fn setup_peer_communication(
     server_peer_id: u8,
     peers: &[Peer],
-) -> (HttpPeerCommunication, PeerCommunicationManager) {
+) -> (MpscPeerCommunication, PeerCommunicationManager) {
     let (tx, rx) = mpsc::channel::<PeerEnvelope>(32);
 
     let peer_urls = peers
@@ -105,7 +105,7 @@ pub fn setup_peer_communication(
         .map(|p| (p.id, p.url.clone()))
         .collect::<HashMap<u8, String>>();
 
-    let http_peer_communication = HttpPeerCommunication {
+    let mpsc_peer_communication = MpscPeerCommunication {
         server_peer_id,
         peer_urls,
         tx,
@@ -117,7 +117,7 @@ pub fn setup_peer_communication(
         client: reqwest::Client::new(),
     };
 
-    (http_peer_communication, peer_communication_manager)
+    (mpsc_peer_communication, peer_communication_manager)
 }
 
 impl PeerCommunicationManager {
@@ -154,7 +154,7 @@ impl PeerCommunicationManager {
 }
 
 #[async_trait::async_trait]
-impl PeerCommunication for HttpPeerCommunication {
+impl PeerCommunication for MpscPeerCommunication {
     async fn send_message(&self, message: PeerMessage) -> Result<(), PeerCommunicationError> {
         if message.peer_id == self.server_peer_id {
             return Err(PeerCommunicationError::OwnPeerId(message.peer_id));
