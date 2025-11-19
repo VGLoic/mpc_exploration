@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -9,7 +8,8 @@ mod outbox_dispatcher;
 mod outbox_repository;
 
 use crate::Peer;
-use outbox_dispatcher::PeerCommunicationOutboxDispatcher;
+pub use outbox_dispatcher::PeerMessagePayload;
+use outbox_dispatcher::{PeerCommunicationOutboxDispatcher, PeerEnvelope};
 use outbox_repository::{InMemoryOutboxRepository, OutboxRepository};
 
 /// Trait for peer-to-peer communication.
@@ -38,14 +38,6 @@ pub enum PeerCommunicationError {
     Unknown(#[from] anyhow::Error),
 }
 
-#[derive(Clone)]
-pub struct PeerEnvelope {
-    pub peer_id: u8,
-    pub peer_url: String,
-    pub process_id: Uuid,
-    pub payload: PeerMessagePayload,
-}
-
 pub struct PeerMessage {
     pub peer_id: u8,
     pub process_id: Uuid,
@@ -68,13 +60,6 @@ impl PeerMessage {
             payload: PeerMessagePayload::SharesSum { value },
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum PeerMessagePayload {
-    Share { value: u64 },
-    SharesSum { value: u64 },
 }
 
 pub struct OutboxPeerCommunication {

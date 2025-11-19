@@ -3,10 +3,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::outbox_dispatcher::PeerEnvelope;
 use anyhow::anyhow;
 use uuid::Uuid;
-
-use super::PeerEnvelope;
 
 /// Repository trait for managing outbox items to be sent to peers.
 /// It supports enqueuing, dequeuing, re-enqueuing, and fetching items ready to send.
