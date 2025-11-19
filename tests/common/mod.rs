@@ -35,11 +35,16 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         )
         .try_init();
 
-    let (peer_communication, mut peer_communication_manager) =
+    let (peer_communication, mut peer_communication_dispatcher, outbox_interval_ping) =
         setup_peer_communication(config.server_peer_id, &config.peers);
     tokio::spawn(async move {
-        if let Err(e) = peer_communication_manager.run().await {
-            tracing::error!("Peer communication manager encountered an error: {}", e);
+        if let Err(e) = peer_communication_dispatcher.run().await {
+            tracing::error!("Peer communication dispatcher encountered an error: {}", e);
+        }
+    });
+    tokio::spawn(async move {
+        if let Err(e) = outbox_interval_ping.run().await {
+            tracing::error!("Outbox interval ping encountered an error: {}", e);
         }
     });
 
