@@ -40,7 +40,10 @@ async fn create_process(
     let create_process_request = domain::CreateProcessRequest::new(
         state.server_peer_id,
         &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
-    )?;
+    )
+    .map_err(|e| match e {
+        domain::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
+    })?;
 
     let created_process = state
         .addition
@@ -68,14 +71,6 @@ async fn create_process(
             input: created_process.input,
         }),
     ))
-}
-
-impl From<domain::CreateProcessRequestError> for ApiError {
-    fn from(err: domain::CreateProcessRequestError) -> Self {
-        match err {
-            domain::CreateProcessRequestError::Unknown(e) => e.into(),
-        }
-    }
 }
 
 async fn send_share(
