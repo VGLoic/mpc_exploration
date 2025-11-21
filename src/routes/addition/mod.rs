@@ -204,7 +204,16 @@ async fn receive_share(
         peer.id,
         value,
         existing_process.as_ref(),
-    )?;
+    )
+    .map_err(|e| match e {
+        domain::ReceiveShareRequestError::Unknown(err) => ApiError::from(err),
+        domain::ReceiveShareRequestError::ShareAlreadyReceived(peer_id) => {
+            ApiError::BadRequest(format!("share already received from peer id {peer_id}"))
+        }
+        domain::ReceiveShareRequestError::AllSharesReceived => ApiError::BadRequest(
+            "all shares have already been received for this process".to_string(),
+        ),
+    })?;
 
     match receive_share_request {
         domain::ReceiveShareRequest::InitializeProcess(request) => {
@@ -254,52 +263,64 @@ async fn receive_share(
     Ok(StatusCode::OK)
 }
 
-impl From<domain::ReceiveShareRequestError> for ApiError {
-    fn from(err: domain::ReceiveShareRequestError) -> Self {
-        match err {
-            domain::ReceiveShareRequestError::Unknown(e) => e.into(),
-            domain::ReceiveShareRequestError::ShareAlreadyReceived(peer_id) => {
-                ApiError::BadRequest(format!("share already received from peer id {peer_id}"))
-            }
-            domain::ReceiveShareRequestError::AllSharesReceived => ApiError::BadRequest(
-                "all shares have already been received for this process".to_string(),
-            ),
-        }
-    }
-}
-
 async fn receive_shares_sum(
     state: RouterState,
     process_id: Uuid,
     peer: Peer,
     value: u64,
 ) -> Result<StatusCode, ApiError> {
-    if state.addition.get_process(process_id).await.is_ok() {
-        let updated_process = state
-            .addition
-            .receive_shares_sum(process_id, peer.id, value)
-            .await
-            .map_err(|e| e.context("receiving sum share for existing process"))?;
+    let existing_process = state.addition.get_process(process_id).await.ok();
 
-        if let AdditionProcessState::Completed { final_sum } = &updated_process.state {
+    let receive_shares_sum_request = domain::ReceiveSharesSumRequest::new(
+        process_id,
+        state.server_peer_id,
+        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+        peer.id,
+        value,
+        existing_process.as_ref(),
+    )
+    .map_err(|e| match e {
+        domain::ReceiveSharesSumRequestError::Unknown(err) => ApiError::from(err),
+        domain::ReceiveSharesSumRequestError::SumSharesAlreadyReceived(peer_id) => {
+            ApiError::BadRequest(format!(
+                "shares sum already received from peer id {peer_id}"
+            ))
+        }
+        domain::ReceiveSharesSumRequestError::AllSharesSumsReceived => ApiError::BadRequest(
+            "all shares sums have already been received for this process".to_string(),
+        ),
+    })?;
+
+    match receive_shares_sum_request {
+        domain::ReceiveSharesSumRequest::InitializeProcess(request) => {
+            let created_process = state
+                .addition
+                .receive_new_process_shares_sum(request)
+                .await?;
+
+            let peer_messages = created_process
+                .shares_to_send
+                .iter()
+                .map(|(&peer_id, &value)| {
+                    PeerMessage::new_share_message(peer_id, process_id, value)
+                })
+                .collect::<Vec<_>>();
+            if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+                error!("error sending shares to peers: {}", e);
+            }
+        }
+        domain::ReceiveSharesSumRequest::ReceiveSharesSum(request) => {
+            state.addition.receive_shares_sum(request).await?;
+        }
+        domain::ReceiveSharesSumRequest::ReceiveLastSharesSum(request) => {
+            let final_sum = request.final_sum;
+
+            state.addition.receive_last_shares_sum(request).await?;
+
             info!(
                 "Addition process {} completed with final sum: {}",
                 process_id, final_sum
             );
-        }
-    } else {
-        let process = state
-            .addition
-            .receive_new_process_shares_sum(process_id, peer.id, value)
-            .await
-            .map_err(|e| e.context("creating process after sum share reception"))?;
-        let peer_messages = process
-            .shares_to_send
-            .iter()
-            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
-            .collect::<Vec<_>>();
-        if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
-            error!("error sending shares to peers: {}", e);
         }
     }
 
