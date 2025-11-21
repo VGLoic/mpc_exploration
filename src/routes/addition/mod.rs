@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -15,8 +16,9 @@ use crate::{
 
 use super::{ApiError, RouterState};
 
+pub mod domain;
 pub mod repository;
-use repository::AdditionProcessState;
+use domain::AdditionProcessState;
 
 pub fn addition_router() -> Router<RouterState> {
     Router::new()
@@ -36,21 +38,25 @@ pub struct CreatedProcessResponse {
 async fn create_process(
     State(state): State<RouterState>,
 ) -> Result<(StatusCode, Json<CreatedProcessResponse>), ApiError> {
-    let process_id = Uuid::new_v4();
+    let create_process_request = domain::CreateProcessRequest::new(
+        state.server_peer_id,
+        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+    )?;
 
     let created_process = state
         .addition
-        .create_process(process_id)
+        .create_process(create_process_request)
         .await
         .map_err(|e| e.context("creating addition process"))?;
 
     info!("addition process created");
 
     let peer_messages = created_process
-        .input_shares
+        .input_peer_shares
         .iter()
-        .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
-        .filter(|message| message.peer_id != state.server_peer_id)
+        .map(|(&peer_id, &value)| {
+            PeerMessage::new_share_message(peer_id, created_process.id, value)
+        })
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending initial shares to peers: {}", e);
@@ -59,10 +65,20 @@ async fn create_process(
     Ok((
         StatusCode::OK,
         Json(CreatedProcessResponse {
-            process_id,
+            process_id: created_process.id,
             input: created_process.input,
         }),
     ))
+}
+
+impl From<domain::CreateProcessRequestError> for ApiError {
+    fn from(err: domain::CreateProcessRequestError) -> Self {
+        match err {
+            domain::CreateProcessRequestError::OwnShareMissing(peer_id) => {
+                ApiError::InternalServerError(anyhow!("own share missing for peer id {peer_id}"))
+            }
+        }
+    }
 }
 
 async fn send_share(
@@ -76,10 +92,9 @@ async fn send_share(
         .map_err(|e| e.context("retrieving process before sending share"))?;
 
     let peer_messages = process
-        .input_shares
+        .input_peer_shares
         .iter()
         .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, id, value))
-        .filter(|message| message.peer_id != state.server_peer_id)
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         error!("error sending shares to peers: {}", e);
@@ -223,10 +238,9 @@ async fn receive_share(
             .map_err(|e| e.context("creating process after share reception"))?;
 
         let peer_messages = process
-            .input_shares
+            .input_peer_shares
             .iter()
             .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
-            .filter(|message| message.peer_id != state.server_peer_id)
             .collect::<Vec<_>>();
         if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
             error!("error sending shares to peers: {}", e);
@@ -262,10 +276,9 @@ async fn receive_shares_sum(
             .await
             .map_err(|e| e.context("creating process after sum share reception"))?;
         let peer_messages = process
-            .input_shares
+            .input_peer_shares
             .iter()
             .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
-            .filter(|message| message.peer_id != state.server_peer_id)
             .collect::<Vec<_>>();
         if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
             error!("error sending shares to peers: {}", e);
