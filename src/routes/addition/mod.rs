@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -49,10 +48,10 @@ async fn create_process(
         .await
         .map_err(|e| e.context("creating addition process"))?;
 
-    info!("addition process created");
+    info!("addition process {} created", created_process.id);
 
     let peer_messages = created_process
-        .input_peer_shares
+        .shares_to_send
         .iter()
         .map(|(&peer_id, &value)| {
             PeerMessage::new_share_message(peer_id, created_process.id, value)
@@ -74,9 +73,7 @@ async fn create_process(
 impl From<domain::CreateProcessRequestError> for ApiError {
     fn from(err: domain::CreateProcessRequestError) -> Self {
         match err {
-            domain::CreateProcessRequestError::OwnShareMissing(peer_id) => {
-                ApiError::InternalServerError(anyhow!("own share missing for peer id {peer_id}"))
-            }
+            domain::CreateProcessRequestError::Unknown(e) => e.into(),
         }
     }
 }
@@ -92,7 +89,7 @@ async fn send_share(
         .map_err(|e| e.context("retrieving process before sending share"))?;
 
     let peer_messages = process
-        .input_peer_shares
+        .shares_to_send
         .iter()
         .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, id, value))
         .collect::<Vec<_>>();
@@ -199,55 +196,76 @@ async fn receive_share(
 ) -> Result<StatusCode, ApiError> {
     println!("Received share from peer id {}", peer.id);
 
-    if let Ok(existing_process) = state.addition.get_process(process_id).await {
-        if !matches!(
-            existing_process.state,
-            AdditionProcessState::AwaitingPeerShares
-        ) {
-            return Err(ApiError::BadRequest(
-                "process is not in a state to receive shares".to_string(),
-            ));
-        }
-        let updated_process = state
-            .addition
-            .receive_share(process_id, peer.id, value)
-            .await
-            .map_err(|e| e.context("receiving share for existing process"))?;
+    let existing_process = state.addition.get_process(process_id).await.ok();
+    let receive_share_request = domain::ReceiveShareRequest::new(
+        process_id,
+        state.server_peer_id,
+        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+        peer.id,
+        value,
+        existing_process.as_ref(),
+    )?;
 
-        if let AdditionProcessState::AwaitingPeerSharesSum { shares_sum } = &updated_process.state
-            && let Err(e) = state
+    match receive_share_request {
+        domain::ReceiveShareRequest::InitializeProcess(request) => {
+            let created_process = state.addition.receive_new_process_share(request).await?;
+
+            let peer_messages = created_process
+                .shares_to_send
+                .iter()
+                .map(|(&peer_id, &value)| {
+                    PeerMessage::new_share_message(peer_id, process_id, value)
+                })
+                .collect::<Vec<_>>();
+            if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+                error!("error sending shares to peers: {}", e);
+            }
+        }
+        domain::ReceiveShareRequest::ReceiveShare(request) => {
+            state.addition.receive_share(request).await?;
+        }
+        domain::ReceiveShareRequest::ReceiveLastShare(request) => {
+            let sum_share_to_send = request.computed_shares_sum;
+
+            state.addition.receive_last_share(request).await?;
+
+            if let Err(e) = state
                 .peer_communication
                 .send_messages(
                     state
                         .peers
                         .iter()
                         .map(|peer| {
-                            PeerMessage::new_shares_sum_message(peer.id, process_id, *shares_sum)
+                            PeerMessage::new_shares_sum_message(
+                                peer.id,
+                                process_id,
+                                sum_share_to_send,
+                            )
                         })
                         .collect(),
                 )
                 .await
-        {
-            error!("error sending sum shares to peers: {}", e);
-        }
-    } else {
-        let process = state
-            .addition
-            .receive_new_process_share(process_id, peer.id, value)
-            .await
-            .map_err(|e| e.context("creating process after share reception"))?;
-
-        let peer_messages = process
-            .input_peer_shares
-            .iter()
-            .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
-            .collect::<Vec<_>>();
-        if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
-            error!("error sending shares to peers: {}", e);
+            {
+                error!("error sending sum shares to peers: {}", e);
+            }
         }
     }
 
     Ok(StatusCode::OK)
+}
+
+impl From<domain::ReceiveShareRequestError> for ApiError {
+    fn from(err: domain::ReceiveShareRequestError) -> Self {
+        match err {
+            domain::ReceiveShareRequestError::Unknown(e) => e.into(),
+            domain::ReceiveShareRequestError::ShareAlreadyReceived(peer_id) => {
+                ApiError::BadRequest(format!("share already received from peer id {peer_id}"))
+            }
+            domain::ReceiveShareRequestError::AllSharesReceived => ApiError::BadRequest(
+                "all shares have already been received for this process".to_string(),
+            ),
+        }
+    }
 }
 
 async fn receive_shares_sum(
@@ -276,7 +294,7 @@ async fn receive_shares_sum(
             .await
             .map_err(|e| e.context("creating process after sum share reception"))?;
         let peer_messages = process
-            .input_peer_shares
+            .shares_to_send
             .iter()
             .map(|(&peer_id, &value)| PeerMessage::new_share_message(peer_id, process_id, value))
             .collect::<Vec<_>>();
