@@ -79,10 +79,11 @@ async fn assert_completed_addition_process(
         .map(|res| res.unwrap())
         .collect();
 
-    let expected_sum: u64 = wait_for_completion_results
+    let expected_sum = (wait_for_completion_results
         .iter()
-        .map(|res| res.input)
-        .sum();
+        .map(|res| Into::<u128>::into(res.input))
+        .sum::<u128>()
+        % 1_000_000_007) as u64;
 
     for (index, completed_process) in wait_for_completion_results.iter().enumerate() {
         assert_eq!(

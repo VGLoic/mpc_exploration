@@ -22,7 +22,6 @@ pub fn split_secret(secret: u64, points: &[u8], n: u64) -> HashMap<u8, u64> {
 }
 
 pub fn recover_secret(shares: &[Share], n: u64) -> Result<u64, anyhow::Error> {
-    println!("Recovering secret from shares: {:?}", shares);
     let mut points = Vec::with_capacity(shares.len());
     let mut values = Vec::with_capacity(shares.len());
     for share in shares {
