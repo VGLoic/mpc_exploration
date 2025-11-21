@@ -136,6 +136,8 @@ async fn delete_process(
         .await
         .map_err(|e| e.context("deleting addition process"))?;
 
+    info!("addition process {process_id} deleted");
+
     Ok(StatusCode::OK)
 }
 
@@ -189,7 +191,7 @@ async fn receive_share(
     peer: Peer,
     value: u64,
 ) -> Result<StatusCode, ApiError> {
-    println!("Received share from peer id {}", peer.id);
+    info!("Received share from peer id {}", peer.id);
 
     let existing_process = state.addition.get_process(process_id).await.ok();
     let receive_share_request = domain::ReceiveShareRequest::new(
@@ -214,6 +216,8 @@ async fn receive_share(
         domain::ReceiveShareRequest::InitializeProcess(request) => {
             let created_process = state.addition.receive_new_process_share(request).await?;
 
+            info!("addition process {process_id} initialized");
+
             let peer_messages = created_process
                 .shares_to_send
                 .iter()
@@ -227,11 +231,21 @@ async fn receive_share(
         }
         domain::ReceiveShareRequest::ReceiveShare(request) => {
             state.addition.receive_share(request).await?;
+
+            info!(
+                "addition process {process_id} received share from peer {}",
+                peer.id
+            );
         }
         domain::ReceiveShareRequest::ReceiveLastShare(request) => {
             let sum_share_to_send = request.computed_shares_sum;
 
             state.addition.receive_last_share(request).await?;
+
+            info!(
+                "addition process {process_id} completed share reception from peer {}",
+                peer.id
+            );
 
             if let Err(e) = state
                 .peer_communication
@@ -293,6 +307,8 @@ async fn receive_shares_sum(
                 .receive_new_process_shares_sum(request)
                 .await?;
 
+            info!("addition process {process_id} initialized");
+
             let peer_messages = created_process
                 .shares_to_send
                 .iter()
@@ -306,16 +322,18 @@ async fn receive_shares_sum(
         }
         domain::ReceiveSharesSumRequest::ReceiveSharesSum(request) => {
             state.addition.receive_shares_sum(request).await?;
+
+            info!(
+                "addition process {process_id} received shares sum from peer {}",
+                peer.id
+            );
         }
         domain::ReceiveSharesSumRequest::ReceiveLastSharesSum(request) => {
             let final_sum = request.final_sum;
 
             state.addition.receive_last_shares_sum(request).await?;
 
-            info!(
-                "Addition process {} completed with final sum: {}",
-                process_id, final_sum
-            );
+            info!("addition process {process_id} completed with final sum: {final_sum}");
         }
     }
 

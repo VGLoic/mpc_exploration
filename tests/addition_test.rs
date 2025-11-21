@@ -79,14 +79,6 @@ async fn assert_completed_addition_process(
         .map(|res| res.unwrap())
         .collect();
 
-    println!(
-        "Inputs: {:?}",
-        wait_for_completion_results
-            .iter()
-            .map(|res| res.input)
-            .collect::<Vec<_>>()
-    );
-
     let expected_sum = (wait_for_completion_results
         .iter()
         .map(|res| Into::<u128>::into(res.input))
