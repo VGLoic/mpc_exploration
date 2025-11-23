@@ -43,32 +43,40 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         )
         .try_init();
 
-    let (peer_communication, mut peer_communication_dispatcher, outbox_interval_ping) =
-        setup_peer_communication(config.server_peer_id, &config.peers);
-    tokio::spawn(async move {
-        if let Err(e) = peer_communication_dispatcher.run().await {
-            tracing::error!("Peer communication dispatcher encountered an error: {}", e);
-        }
-    });
-    tokio::spawn(async move {
-        if let Err(e) = outbox_interval_ping.run().await {
-            tracing::error!("Outbox interval ping encountered an error: {}", e);
-        }
-    });
-
     let addition_process_repository = Arc::new(InMemoryAdditionProcessRepository::new());
 
-    let (mut addition_process_orchestrator, pinger) = setup_addition_process_orchestrator(
-        addition_process_repository.clone(),
-        config.server_peer_id,
-        &config.peers,
-    );
+    let (mut addition_process_orchestrator, addition_process_orchestrator_pinger) =
+        setup_addition_process_orchestrator(
+            addition_process_repository.clone(),
+            config.server_peer_id,
+            &config.peers,
+        );
     tokio::spawn(async move {
-        addition_process_orchestrator.start().await;
+        addition_process_orchestrator.run().await;
     });
     tokio::spawn(async move {
-        if let Err(e) = pinger.run().await {
-            error!("Addition process interval ping encountered an error: {}", e);
+        if let Err(e) = addition_process_orchestrator_pinger.run().await {
+            error!(
+                "Addition process interval pinger encountered an error: {}",
+                e
+            );
+        }
+    });
+
+    let (
+        peer_communication,
+        mut peer_communication_orchestrator,
+        peer_communication_orchestrator_pinger,
+    ) = setup_peer_communication(config.server_peer_id, &config.peers);
+    tokio::spawn(async move {
+        peer_communication_orchestrator.run().await;
+    });
+    tokio::spawn(async move {
+        if let Err(e) = peer_communication_orchestrator_pinger.run().await {
+            error!(
+                "Peer communication orchestrator interval pinger encountered an error: {}",
+                e
+            );
         }
     });
 

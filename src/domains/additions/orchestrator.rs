@@ -57,7 +57,7 @@ impl AdditionProcessOrchestrator {
         }
     }
 
-    pub async fn start(&mut self) {
+    pub async fn run(&mut self) {
         while self.channel_receiver.recv().await.is_some() {
             let raw_processes = match self.repository.get_ongoing_processes().await {
                 Ok(processes) => processes,
