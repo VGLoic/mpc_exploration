@@ -17,16 +17,16 @@ pub fn setup_addition_process_orchestrator(
     repository: Arc<dyn AdditionProcessRepository>,
     own_peer_id: u8,
     peers: &[Peer],
-) -> (AdditionProcessOrchstrator, IntervalPing) {
+) -> (AdditionProcessOrchestrator, IntervalPing) {
     let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<()>(100);
     let orchestrator =
-        AdditionProcessOrchstrator::new(repository, own_peer_id, peers, channel_receiver);
+        AdditionProcessOrchestrator::new(repository, own_peer_id, peers, channel_receiver);
     let interval_ping = IntervalPing::new(channel_sender);
     (orchestrator, interval_ping)
 }
 
 /// Orchestrates the addition processes by interacting with the repository and the peers.
-pub struct AdditionProcessOrchstrator {
+pub struct AdditionProcessOrchestrator {
     repository: Arc<dyn AdditionProcessRepository>,
     own_peer_id: u8,
     peer_urls: HashMap<u8, String>,
@@ -35,7 +35,7 @@ pub struct AdditionProcessOrchstrator {
     failures_attempts: Mutex<HashMap<uuid::Uuid, u8>>,
 }
 
-impl AdditionProcessOrchstrator {
+impl AdditionProcessOrchestrator {
     pub fn new(
         repository: Arc<dyn AdditionProcessRepository>,
         own_peer_id: u8,
