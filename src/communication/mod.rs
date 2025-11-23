@@ -45,19 +45,11 @@ pub struct PeerMessage {
 }
 
 impl PeerMessage {
-    pub fn new_share_message(peer_id: u8, process_id: Uuid, value: u64) -> Self {
+    pub fn new_process(peer_id: u8, process_id: Uuid) -> Self {
         Self {
             peer_id,
             process_id,
-            payload: PeerMessagePayload::Share { value },
-        }
-    }
-
-    pub fn new_shares_sum_message(peer_id: u8, process_id: Uuid, value: u64) -> Self {
-        Self {
-            peer_id,
-            process_id,
-            payload: PeerMessagePayload::SharesSum { value },
+            payload: PeerMessagePayload::NewProcess {},
         }
     }
 }

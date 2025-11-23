@@ -1,0 +1,172 @@
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{delete, get, post},
+};
+use serde::{Deserialize, Serialize};
+use tracing::info;
+use uuid::Uuid;
+
+use crate::{
+    Peer,
+    communication::PeerMessage,
+    domains::{self, additions::AdditionProcessProgress},
+};
+
+use super::{ApiError, RouterState};
+
+pub fn addition_router() -> Router<RouterState> {
+    Router::new()
+        .route("/", post(create_process))
+        .route("/{id}/initiate", post(initiate_process))
+        .route("/{id}", delete(delete_process))
+        .route("/{id}", get(get_process))
+        .route("/{id}/progress", get(get_process_progress))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatedProcessResponse {
+    pub process_id: Uuid,
+    pub input: u64,
+}
+async fn create_process(
+    State(state): State<RouterState>,
+) -> Result<(StatusCode, Json<CreatedProcessResponse>), ApiError> {
+    let process_id = Uuid::new_v4();
+    let create_process_request = domains::additions::CreateProcessRequest::new(
+        process_id,
+        state.server_peer_id,
+        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+    )
+    .map_err(|e| match e {
+        domains::additions::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
+    })?;
+
+    let created_process = state
+        .addition
+        .create_process(create_process_request)
+        .await
+        .map_err(|e| e.context("creating addition process"))?;
+
+    info!("addition process {} created", created_process.id);
+
+    let peer_messages = state
+        .peers
+        .iter()
+        .map(|peer| PeerMessage::new_process(peer.id, created_process.id))
+        .collect::<Vec<_>>();
+    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+        tracing::error!("error sending initial shares to peers: {}", e);
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(CreatedProcessResponse {
+            process_id: created_process.id,
+            input: created_process.input,
+        }),
+    ))
+}
+
+async fn initiate_process(
+    State(state): State<RouterState>,
+    peer: Peer,
+    Path(process_id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let create_process_request = domains::additions::CreateProcessRequest::new(
+        process_id,
+        state.server_peer_id,
+        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+    )
+    .map_err(|e| match e {
+        domains::additions::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
+    })?;
+
+    let created_process = state
+        .addition
+        .create_process(create_process_request)
+        .await
+        .map_err(|e| e.context("creating addition process"))?;
+
+    info!(
+        "addition process {} initiated after message from peer {}",
+        created_process.id, peer.id
+    );
+
+    Ok(StatusCode::OK)
+}
+
+async fn delete_process(
+    State(state): State<RouterState>,
+    Path(process_id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .addition
+        .delete_process(process_id)
+        .await
+        .map_err(|e| e.context("deleting addition process"))?;
+
+    info!("addition process {process_id} deleted");
+
+    Ok(StatusCode::OK)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetProcessResponse {
+    pub process_id: Uuid,
+    pub input: u64,
+    pub sum: Option<u64>,
+}
+
+async fn get_process(
+    State(state): State<RouterState>,
+    Path(process_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<GetProcessResponse>), ApiError> {
+    let process = state
+        .addition
+        .get_process(process_id)
+        .await
+        .map_err(|e| e.context("retrieving process"))?;
+    let sum = match &process.state {
+        domains::additions::AdditionProcessState::Completed { final_sum, .. } => Some(*final_sum),
+        _ => None,
+    };
+    Ok((
+        StatusCode::OK,
+        Json(GetProcessResponse {
+            process_id,
+            input: process.input,
+            sum,
+        }),
+    ))
+}
+
+async fn get_process_progress(
+    State(state): State<RouterState>,
+    peer: Peer,
+    Path(process_id): Path<Uuid>,
+) -> Result<Json<AdditionProcessProgress>, ApiError> {
+    let process = state
+        .addition
+        .get_process(process_id)
+        .await
+        .map_err(|e| e.context("retrieving process before getting progress"))?;
+
+    let peer_share = process
+        .shares_to_send
+        .get(&peer.id)
+        .ok_or_else(|| ApiError::BadRequest("no share found for this peer".to_string()))?;
+    let shares_sum = match &process.state {
+        domains::additions::AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => {
+            Some(*shares_sum)
+        }
+        domains::additions::AdditionProcessState::Completed { shares_sum, .. } => Some(*shares_sum),
+        _ => None,
+    };
+
+    Ok(Json(AdditionProcessProgress {
+        share: *peer_share,
+        shares_sum,
+    }))
+}

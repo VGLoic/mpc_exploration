@@ -32,8 +32,7 @@ pub struct PeerEnvelope {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum PeerMessagePayload {
-    Share { value: u64 },
-    SharesSum { value: u64 },
+    NewProcess {},
 }
 
 impl PeerCommunicationOutboxDispatcher {
@@ -123,7 +122,7 @@ impl PeerCommunicationOutboxDispatcher {
         let response = self
             .client
             .post(format!(
-                "{}/additions/{}/receive",
+                "{}/additions/{}/initiate",
                 item.envelope.peer_url, item.envelope.process_id
             ))
             .header("X-PEER-ID", self.server_peer_id.to_string())
