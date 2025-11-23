@@ -160,9 +160,15 @@ impl ReceiveSharesSumsRequest {
                 final_sum: None,
             });
         }
+        let own_shares_sum = match &process.state {
+            AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => *shares_sum,
+            _ => {
+                return Err(ReceiveSharesSumsRequestError::InvalidState);
+            }
+        };
         let mut all_sums_coordinates = vec![Share {
             point: own_peer_id,
-            value: process.own_share,
+            value: own_shares_sum,
         }];
         for (peer_id, share_sum) in &all_received_shares_sums {
             all_sums_coordinates.push(Share {

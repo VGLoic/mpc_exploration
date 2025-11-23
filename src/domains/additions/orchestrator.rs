@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::anyhow;
 use futures::{StreamExt, stream};
@@ -29,6 +32,7 @@ pub struct AdditionProcessOrchstrator {
     peer_urls: HashMap<u8, String>,
     channel_receiver: tokio::sync::mpsc::Receiver<()>,
     client: reqwest::Client,
+    failures_attempts: Mutex<HashMap<uuid::Uuid, u8>>,
 }
 
 impl AdditionProcessOrchstrator {
@@ -49,16 +53,34 @@ impl AdditionProcessOrchstrator {
             peer_urls,
             channel_receiver,
             client: reqwest::Client::new(),
+            failures_attempts: Mutex::new(HashMap::new()),
         }
     }
 
     pub async fn start(&mut self) {
         while self.channel_receiver.recv().await.is_some() {
-            let processes = match self.repository.get_ongoing_processes().await {
+            let raw_processes = match self.repository.get_ongoing_processes().await {
                 Ok(processes) => processes,
                 Err(e) => {
                     tracing::error!("Failed to fetch ongoing addition processes: {:?}", e);
                     continue;
+                }
+            };
+            let processes = {
+                if let Ok(failures_attempts) = self.failures_attempts.lock() {
+                    raw_processes
+                        .into_iter()
+                        .filter(|process| {
+                            if let Some(attempts) = failures_attempts.get(&process.id) {
+                                *attempts < 5
+                            } else {
+                                true
+                            }
+                        })
+                        .collect::<Vec<AdditionProcess>>()
+                } else {
+                    tracing::error!("Failed to acquire lock on failures_attempts");
+                    raw_processes
                 }
             };
 
@@ -72,8 +94,26 @@ impl AdditionProcessOrchstrator {
             }
 
             for process in processes {
+                let mut failure_ids = vec![];
                 if let Err(e) = self.poll_and_update_process(&process).await {
                     tracing::error!("Failed to poll and update process {}: {:?}", process.id, e);
+                    failure_ids.push(process.id);
+                }
+                if !failure_ids.is_empty() {
+                    if let Ok(mut failures_attempts) = self.failures_attempts.lock() {
+                        for failure_id in &failure_ids {
+                            let counter = failures_attempts.entry(*failure_id).or_insert(0);
+                            *counter += 1;
+                            if *counter >= 5 {
+                                tracing::error!(
+                                    "Process {} reached maximum failure attempts. It will be skipped in future orchestrations.",
+                                    failure_id
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::error!("Failed to acquire lock on failures_attempts");
+                    }
                 }
             }
         }
@@ -86,17 +126,17 @@ impl AdditionProcessOrchstrator {
         match process.state {
             super::AdditionProcessState::AwaitingPeerShares => {
                 tracing::info!("Polling for peer shares for process {}", process.id);
-                self.poll_for_peer_shares(process).await?;
+                self.poll_for_peer_shares(process).await
             }
             super::AdditionProcessState::AwaitingPeerSharesSum { .. } => {
                 tracing::info!("Polling for peer shares sums for process {}", process.id);
-                self.poll_for_peer_shares_sums(process).await?;
+                self.poll_for_peer_shares_sums(process).await
             }
             super::AdditionProcessState::Completed { .. } => {
                 // No action needed for completed processes
+                Ok(())
             }
-        };
-        Ok(())
+        }
     }
 
     /// Looks for missing shares from peers and tries to fetch them.
@@ -109,7 +149,6 @@ impl AdditionProcessOrchstrator {
             .cloned()
             .collect::<Vec<u8>>();
         if missing_peer_ids.is_empty() {
-            // REMIND ME: track failure attempt?
             return Err(anyhow!("unexpected: no missing peer shares to poll for"));
         }
         let peer_progresses = self
@@ -129,7 +168,6 @@ impl AdditionProcessOrchstrator {
         .map_err(|e| match e {
             ReceiveSharesRequestError::Unknown(e) => e.context("creating receive shares request"),
             ReceiveSharesRequestError::InvalidState => {
-                // REMIND ME: track failure attempt?
                 anyhow!("invalid process state when creating receive shares request")
             }
         })?;
@@ -154,7 +192,6 @@ impl AdditionProcessOrchstrator {
             .cloned()
             .collect::<Vec<u8>>();
         if missing_peer_ids.is_empty() {
-            // REMIND ME: track failure attempt?
             return Err(anyhow!(
                 "unexpected: no missing peer shares sums to poll for"
             ));
@@ -185,7 +222,6 @@ impl AdditionProcessOrchstrator {
                 e.context("creating receive shares sums request")
             }
             ReceiveSharesSumsRequestError::InvalidState => {
-                // REMIND ME: track failure attempt?
                 anyhow!("invalid process state when creating receive shares sums request")
             }
         })?;
@@ -214,6 +250,9 @@ impl AdditionProcessOrchstrator {
                 Ok(progress) => progresses.push(progress),
                 Err(e) => tracing::error!("Error fetching process progress from peer: {}", e),
             }
+        }
+        if progresses.is_empty() {
+            return Err(anyhow!("Failed to fetch progress from any peer"));
         }
         Ok(progresses)
     }
