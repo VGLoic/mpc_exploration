@@ -3,6 +3,9 @@
 pub trait Notifier: Send + Sync {
     /// Sends a ping notification.
     /// This method attempts to send a ping through the associated channel.
+    /// The method does not block; it uses a non-blocking send.
+    /// If the channel is full, the ping is silently skipped.
+    /// If the channel is closed, a warning is logged.
     fn ping(&self);
 }
 
