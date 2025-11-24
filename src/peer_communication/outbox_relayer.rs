@@ -120,6 +120,9 @@ impl OutboxPeerMessagesRelayer {
                     .notify_new_process(peer_id, process_id)
                     .await
             }
+            PeerMessage::NotifyProcessProgress { peer_id } => {
+                self.peer_client.notify_process_progress(peer_id).await
+            }
         }
     }
 }

@@ -15,6 +15,8 @@ pub trait PeerClient: Send + Sync {
         peer_id: u8,
         process_id: Uuid,
     ) -> Result<AdditionProcessProgress, anyhow::Error>;
+
+    async fn notify_process_progress(&self, peer_id: u8) -> Result<(), anyhow::Error>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -63,6 +65,31 @@ impl PeerClient for HttpPeerClient {
         if !response.status().is_success() {
             return Err(anyhow!(
                 "Failed to notify peer {}: HTTP {}",
+                peer_id,
+                response.status()
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn notify_process_progress(&self, peer_id: u8) -> Result<(), anyhow::Error> {
+        let peer_url = self
+            .peer_urls
+            .get(&peer_id)
+            .ok_or_else(|| anyhow!("Peer ID {} not found", peer_id))?;
+
+        let response = self
+            .client
+            .post(format!("{}/additions/progress_notification", peer_url))
+            .header("X-PEER-ID", self.server_peer_id.to_string())
+            .send()
+            .await
+            .map_err(|e| anyhow!("{e}").context("notifying peer of process progress"))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to notify peer {} of process progress: HTTP {}",
                 peer_id,
                 response.status()
             ));

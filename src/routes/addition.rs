@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{Peer, domains, peer_communication::peer_client::AdditionProcessProgress};
+use crate::{
+    Peer, domains,
+    peer_communication::{PeerMessage, peer_client::AdditionProcessProgress},
+};
 
 use super::{ApiError, RouterState};
 
@@ -18,6 +21,10 @@ pub fn addition_router() -> Router<RouterState> {
         .route("/{id}", delete(delete_process))
         .route("/{id}", get(get_process))
         .route("/{id}/progress", get(get_process_progress))
+        .route(
+            "/progress-notification",
+            post(notify_internal_process_orchestrator),
+        )
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -50,18 +57,19 @@ async fn create_process(
 
     info!("addition process {} created", created_process.id());
 
-    // let peer_messages = state
-    //     .peers
-    //     .iter()
-    //     .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
-    //     .collect::<Vec<_>>();
-    // if let Err(e) = state
-    //     .peer_messages_sender
-    //     .send_messages(peer_messages)
-    //     .await
-    // {
-    //     tracing::error!("error sending initial shares to peers: {}", e);
-    // }
+    if let Err(e) = state
+        .peer_messages_sender
+        .send_messages(
+            state
+                .peers
+                .iter()
+                .map(|p| PeerMessage::notify_process_progress(p.id))
+                .collect(),
+        )
+        .await
+    {
+        tracing::error!("error sending initial shares to peers: {}", e);
+    }
 
     Ok((
         StatusCode::OK,
@@ -71,35 +79,6 @@ async fn create_process(
         }),
     ))
 }
-
-// async fn initiate_process(
-//     State(state): State<RouterState>,
-//     peer: Peer,
-//     Path(process_id): Path<Uuid>,
-// ) -> Result<StatusCode, ApiError> {
-//     let create_process_request = domains::additions::CreateProcessRequest::new(
-//         process_id,
-//         state.server_peer_id,
-//         &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
-//     )
-//     .map_err(|e| match e {
-//         domains::additions::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
-//     })?;
-
-//     let created_process = state
-//         .addition
-//         .create_process(create_process_request)
-//         .await
-//         .map_err(|e| e.context("creating addition process"))?;
-
-//     info!(
-//         "addition process {} initiated after message from peer {}",
-//         created_process.id(),
-//         peer.id
-//     );
-
-//     Ok(StatusCode::OK)
-// }
 
 async fn delete_process(
     State(state): State<RouterState>,
@@ -172,4 +151,11 @@ async fn get_process_progress(
         share: *peer_share,
         shares_sum,
     }))
+}
+
+async fn notify_internal_process_orchestrator(
+    State(_state): State<RouterState>,
+    _peer: Peer,
+) -> Result<StatusCode, ApiError> {
+    Ok(StatusCode::OK)
 }

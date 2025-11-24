@@ -71,7 +71,7 @@ async fn setup_instances(ports: &[u16]) -> Vec<common::InstanceState> {
             .cloned()
             .collect::<Vec<_>>();
         let config = Config {
-            port: port.clone(),
+            port: *port,
             log_level: Level::WARN,
             server_peer_id: (i + 1) as u8,
             peers: peer_list,
