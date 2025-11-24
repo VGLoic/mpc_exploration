@@ -3,7 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::anyhow;
 use futures::{StreamExt, stream};
 
-use crate::Peer;
+use crate::{
+    Peer,
+    domains::additions::{AwaitingPeerSharesProcess, AwaitingPeerSharesSumProcess},
+};
 
 use super::{
     AdditionProcess, AdditionProcessProgress, ReceiveSharesRequest, ReceiveSharesRequestError,
@@ -60,7 +63,7 @@ impl AdditionProcessOrchestrator {
                 Ok(processes) => processes
                     .into_iter()
                     .filter(|p| {
-                        if let Some(attempts) = self.failures_attempts.get(&p.id) {
+                        if let Some(attempts) = self.failures_attempts.get(&p.id()) {
                             *attempts < 5
                         } else {
                             true
@@ -85,8 +88,12 @@ impl AdditionProcessOrchestrator {
             let mut failure_ids = vec![];
             for process in processes {
                 if let Err(e) = self.poll_and_update_process(&process).await {
-                    tracing::error!("Failed to poll and update process {}: {:?}", process.id, e);
-                    failure_ids.push(process.id);
+                    tracing::error!(
+                        "Failed to poll and update process {}: {:?}",
+                        process.id(),
+                        e
+                    );
+                    failure_ids.push(process.id());
                 }
             }
             if !failure_ids.is_empty() {
@@ -108,16 +115,16 @@ impl AdditionProcessOrchestrator {
         &self,
         process: &AdditionProcess,
     ) -> Result<(), anyhow::Error> {
-        match process.state {
-            super::AdditionProcessState::AwaitingPeerShares => {
-                tracing::info!("Polling for peer shares for process {}", process.id);
-                self.poll_for_peer_shares(process).await
+        match process {
+            AdditionProcess::AwaitingPeerShares(p) => {
+                tracing::info!("Polling for peer shares for process {}", p.id);
+                self.poll_for_peer_shares(p).await
             }
-            super::AdditionProcessState::AwaitingPeerSharesSum { .. } => {
-                tracing::info!("Polling for peer shares sums for process {}", process.id);
-                self.poll_for_peer_shares_sums(process).await
+            AdditionProcess::AwaitingPeerSharesSum(p) => {
+                tracing::info!("Polling for peer shares sums for process {}", p.id);
+                self.poll_for_peer_shares_sums(p).await
             }
-            super::AdditionProcessState::Completed { .. } => {
+            AdditionProcess::Completed(_p) => {
                 // No action needed for completed processes
                 Ok(())
             }
@@ -126,7 +133,10 @@ impl AdditionProcessOrchestrator {
 
     /// Looks for missing shares from peers and tries to fetch them.
     /// Once shares are fetched, create the associated request and use the repository to update the process state accordingly.
-    async fn poll_for_peer_shares(&self, process: &AdditionProcess) -> Result<(), anyhow::Error> {
+    async fn poll_for_peer_shares(
+        &self,
+        process: &AwaitingPeerSharesProcess,
+    ) -> Result<(), anyhow::Error> {
         let missing_peer_ids = self
             .peer_urls
             .keys()
@@ -152,9 +162,6 @@ impl AdditionProcessOrchestrator {
         )
         .map_err(|e| match e {
             ReceiveSharesRequestError::Unknown(e) => e.context("creating receive shares request"),
-            ReceiveSharesRequestError::InvalidState => {
-                anyhow!("invalid process state when creating receive shares request")
-            }
         })?;
         self.repository
             .receive_shares(receive_shares_request)
@@ -168,7 +175,7 @@ impl AdditionProcessOrchestrator {
     /// Once shares sums are fetched, create the associated request and use the repository to update the process state accordingly.
     async fn poll_for_peer_shares_sums(
         &self,
-        process: &AdditionProcess,
+        process: &AwaitingPeerSharesSumProcess,
     ) -> Result<(), anyhow::Error> {
         let missing_peer_ids = self
             .peer_urls
@@ -205,9 +212,6 @@ impl AdditionProcessOrchestrator {
         .map_err(|e| match e {
             ReceiveSharesSumsRequestError::Unknown(e) => {
                 e.context("creating receive shares sums request")
-            }
-            ReceiveSharesSumsRequestError::InvalidState => {
-                anyhow!("invalid process state when creating receive shares sums request")
             }
         })?;
         self.repository

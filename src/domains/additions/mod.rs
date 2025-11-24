@@ -10,22 +10,60 @@ pub mod repository;
 const PRIME: u64 = 1_000_000_007;
 
 #[derive(Clone)]
-pub struct AdditionProcess {
-    pub id: Uuid,
-    pub input: u64,
-    pub own_share: u64,
-    pub shares_to_send: HashMap<u8, u64>,
-    // REMIND ME: reword state as we no longer need to track shares and shares sums simultaneously
-    pub received_shares: HashMap<u8, u64>,
-    pub received_shares_sums: HashMap<u8, u64>,
-    pub state: AdditionProcessState,
+pub enum AdditionProcess {
+    AwaitingPeerShares(AwaitingPeerSharesProcess),
+    AwaitingPeerSharesSum(AwaitingPeerSharesSumProcess),
+    Completed(CompletedProcess),
 }
 
 #[derive(Clone)]
-pub enum AdditionProcessState {
-    AwaitingPeerShares,
-    AwaitingPeerSharesSum { shares_sum: u64 },
-    Completed { shares_sum: u64, final_sum: u64 },
+pub struct InputShares {
+    pub input: u64,
+    pub own_share: u64,
+    pub shares_to_send: HashMap<u8, u64>,
+}
+
+#[derive(Clone)]
+pub struct AwaitingPeerSharesProcess {
+    pub id: Uuid,
+    pub input_shares: InputShares,
+    pub received_shares: HashMap<u8, u64>,
+}
+
+#[derive(Clone)]
+pub struct AwaitingPeerSharesSumProcess {
+    pub id: Uuid,
+    pub input_shares: InputShares,
+    pub received_shares: HashMap<u8, u64>,
+    pub shares_sum: u64,
+    pub received_shares_sums: HashMap<u8, u64>,
+}
+
+#[derive(Clone)]
+pub struct CompletedProcess {
+    pub id: Uuid,
+    pub input_shares: InputShares,
+    pub received_shares: HashMap<u8, u64>,
+    pub shares_sum: u64,
+    pub received_shares_sums: HashMap<u8, u64>,
+    pub final_sum: u64,
+}
+
+impl AdditionProcess {
+    pub fn id(&self) -> Uuid {
+        match self {
+            AdditionProcess::AwaitingPeerShares(p) => p.id,
+            AdditionProcess::AwaitingPeerSharesSum(p) => p.id,
+            AdditionProcess::Completed(p) => p.id,
+        }
+    }
+    pub fn input_shares(&self) -> &InputShares {
+        match self {
+            AdditionProcess::AwaitingPeerShares(p) => &p.input_shares,
+            AdditionProcess::AwaitingPeerSharesSum(p) => &p.input_shares,
+            AdditionProcess::Completed(p) => &p.input_shares,
+        }
+    }
 }
 
 // ########################################################
@@ -34,9 +72,7 @@ pub enum AdditionProcessState {
 
 pub struct CreateProcessRequest {
     pub process_id: uuid::Uuid,
-    pub input: u64,
-    pub own_share: u64,
-    pub shares_to_send: HashMap<u8, u64>,
+    pub input_shares: InputShares,
 }
 
 #[derive(Debug, Error)]
@@ -54,9 +90,11 @@ impl CreateProcessRequest {
         let bootstrap = bootstrap_process(server_peer_id, peer_ids)?;
         Ok(Self {
             process_id,
-            input: bootstrap.input,
-            own_share: bootstrap.own_share,
-            shares_to_send: bootstrap.shares_to_send,
+            input_shares: InputShares {
+                input: bootstrap.input,
+                own_share: bootstrap.own_share,
+                shares_to_send: bootstrap.shares_to_send,
+            },
         })
     }
 }
@@ -78,19 +116,14 @@ pub struct ReceiveSharesRequest {
 pub enum ReceiveSharesRequestError {
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),
-    #[error("process is not ready for shares reception")]
-    InvalidState,
 }
 
 impl ReceiveSharesRequest {
     pub fn new(
-        process: &AdditionProcess,
+        process: &AwaitingPeerSharesProcess,
         received_shares: HashMap<u8, u64>,
         peers_count: usize,
     ) -> Result<Self, ReceiveSharesRequestError> {
-        if !matches!(process.state, AdditionProcessState::AwaitingPeerShares) {
-            return Err(ReceiveSharesRequestError::InvalidState);
-        }
         let mut all_received_shares = process.received_shares.clone();
         for (peer_id, share) in &received_shares {
             all_received_shares.insert(*peer_id, *share);
@@ -106,7 +139,7 @@ impl ReceiveSharesRequest {
             .values()
             .map(|v| Into::<u128>::into(*v))
             .sum::<u128>()
-            .wrapping_add(process.own_share.into())
+            .wrapping_add(process.input_shares.own_share.into())
             .rem_euclid(PRIME as u128) as u64;
         Ok(Self {
             process_id: process.id,
@@ -132,23 +165,15 @@ pub struct ReceiveSharesSumsRequest {
 pub enum ReceiveSharesSumsRequestError {
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),
-    #[error("process is not ready for shares sums reception")]
-    InvalidState,
 }
 
 impl ReceiveSharesSumsRequest {
     pub fn new(
-        process: &AdditionProcess,
+        process: &AwaitingPeerSharesSumProcess,
         received_shares_sums: HashMap<u8, u64>,
         own_peer_id: u8,
         peers_count: usize,
     ) -> Result<Self, ReceiveSharesSumsRequestError> {
-        if !matches!(
-            process.state,
-            AdditionProcessState::AwaitingPeerSharesSum { .. }
-        ) {
-            return Err(ReceiveSharesSumsRequestError::InvalidState);
-        }
         let mut all_received_shares_sums = process.received_shares_sums.clone();
         for (peer_id, share_sum) in &received_shares_sums {
             all_received_shares_sums.insert(*peer_id, *share_sum);
@@ -160,15 +185,10 @@ impl ReceiveSharesSumsRequest {
                 final_sum: None,
             });
         }
-        let own_shares_sum = match &process.state {
-            AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => *shares_sum,
-            _ => {
-                return Err(ReceiveSharesSumsRequestError::InvalidState);
-            }
-        };
+
         let mut all_sums_coordinates = vec![Share {
             point: own_peer_id,
-            value: own_shares_sum,
+            value: process.shares_sum,
         }];
         for (peer_id, share_sum) in &all_received_shares_sums {
             all_sums_coordinates.push(Share {

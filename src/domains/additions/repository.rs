@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
+use crate::domains::additions::{
+    AwaitingPeerSharesProcess, AwaitingPeerSharesSumProcess, CompletedProcess,
+};
+
 use super::{
-    AdditionProcess, AdditionProcessState, CreateProcessRequest, ReceiveSharesRequest,
-    ReceiveSharesSumsRequest,
+    AdditionProcess, CreateProcessRequest, ReceiveSharesRequest, ReceiveSharesSumsRequest,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -81,7 +84,7 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
         let processes = self.processes.read().await;
         let mut ongoing_processes = Vec::new();
         for process in processes.values() {
-            if !matches!(process.state, AdditionProcessState::Completed { .. }) {
+            if !matches!(process, AdditionProcess::Completed(_)) {
                 ongoing_processes.push(process.clone());
             }
         }
@@ -93,15 +96,11 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
         request: CreateProcessRequest,
     ) -> Result<AdditionProcess, anyhow::Error> {
         let mut processes = self.processes.write().await;
-        let process = AdditionProcess {
+        let process = AdditionProcess::AwaitingPeerShares(AwaitingPeerSharesProcess {
             id: request.process_id,
-            input: request.input,
-            own_share: request.own_share,
-            shares_to_send: request.shares_to_send,
+            input_shares: request.input_shares.clone(),
             received_shares: HashMap::new(),
-            received_shares_sums: HashMap::new(),
-            state: AdditionProcessState::AwaitingPeerShares,
-        };
+        });
         processes.insert(request.process_id, process.clone());
         Ok(process)
     }
@@ -115,12 +114,28 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
             .get_mut(&request.process_id)
             .ok_or_else(|| anyhow::anyhow!("Process not found"))?;
 
+        let internal_process = match process {
+            AdditionProcess::AwaitingPeerShares(p) => p,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Process is not in a state to receive shares"
+                ));
+            }
+        };
+
         for (peer_id, share) in &request.received_shares {
-            process.received_shares.insert(*peer_id, *share);
+            internal_process.received_shares.insert(*peer_id, *share);
         }
 
         if let Some(shares_sum) = request.computed_shares_sum {
-            process.state = AdditionProcessState::AwaitingPeerSharesSum { shares_sum };
+            let internal_process = AwaitingPeerSharesSumProcess {
+                id: internal_process.id,
+                input_shares: internal_process.input_shares.clone(),
+                received_shares: internal_process.received_shares.clone(),
+                shares_sum,
+                received_shares_sums: HashMap::new(),
+            };
+            *process = AdditionProcess::AwaitingPeerSharesSum(internal_process);
         }
 
         Ok(process.clone())
@@ -135,8 +150,8 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
             .get_mut(&request.process_id)
             .ok_or_else(|| anyhow::anyhow!("Process not found"))?;
 
-        let shares_sum = match process.state {
-            AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => shares_sum,
+        let internal_process = match process {
+            AdditionProcess::AwaitingPeerSharesSum(p) => p,
             _ => {
                 return Err(anyhow::anyhow!(
                     "Process is not in a state to receive shares sums"
@@ -145,14 +160,21 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
         };
 
         for (peer_id, share_sum) in &request.received_shares_sums {
-            process.received_shares_sums.insert(*peer_id, *share_sum);
+            internal_process
+                .received_shares_sums
+                .insert(*peer_id, *share_sum);
         }
 
         if let Some(final_sum) = request.final_sum {
-            process.state = AdditionProcessState::Completed {
-                shares_sum,
+            let completed_process = CompletedProcess {
+                id: internal_process.id,
+                input_shares: internal_process.input_shares.clone(),
+                received_shares: internal_process.received_shares.clone(),
+                shares_sum: internal_process.shares_sum,
+                received_shares_sums: internal_process.received_shares_sums.clone(),
                 final_sum,
             };
+            *process = AdditionProcess::Completed(completed_process);
         }
 
         Ok(process.clone())
