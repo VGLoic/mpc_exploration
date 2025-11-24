@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod notifier;
 pub mod orchestrator;
 pub mod repository;
 

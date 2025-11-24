@@ -72,7 +72,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     });
 
-    let (mut addition_process_orchestrator, addition_process_orchestrator_pinger) =
+    let (mut addition_process_orchestrator, addition_process_notifier) =
         setup_addition_process_orchestrator(
             addition_process_repository.clone(),
             peer_client,
@@ -82,12 +82,13 @@ async fn main() -> Result<(), anyhow::Error> {
     tokio::spawn(async move {
         addition_process_orchestrator.run().await;
     });
-    tokio::spawn(async move {
-        if let Err(e) = addition_process_orchestrator_pinger.run().await {
-            error!(
-                "Addition process interval pinger encountered an error: {}",
-                e
-            );
+    let addition_process_notifier = Arc::new(addition_process_notifier);
+    tokio::spawn({
+        let addition_process_notifier = addition_process_notifier.clone();
+        async move {
+            addition_process_notifier
+                .run_interval_ping(tokio::time::Duration::from_secs(1))
+                .await;
         }
     });
 
@@ -95,6 +96,7 @@ async fn main() -> Result<(), anyhow::Error> {
         &config,
         addition_process_repository,
         Arc::new(peer_messages_sender),
+        addition_process_notifier,
     )
     .layer((
         // Set `x-request-id` header for every request
