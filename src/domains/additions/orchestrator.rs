@@ -282,7 +282,7 @@ impl IntervalPing {
         loop {
             interval.tick().await;
             if let Err(e) = self.channel_sender.send(()).await {
-                tracing::error!("Error sending ping to outbox dispatcher: {}", e);
+                tracing::error!("Error sending ping to the sender channel: {}", e);
             }
         }
     }

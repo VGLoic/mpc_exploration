@@ -53,11 +53,11 @@ impl PeerCommunicationOutboxOrchestrator {
 }
 
 impl PeerCommunicationOutboxOrchestrator {
-    /// Runs the dispatcher, continuously listening for signals to poll and dispatch outbox items.
+    /// Runs the orchestrator, continuously listening for signals to poll and dispatch outbox items.
     pub async fn run(&mut self) {
         while self.channel_receiver.recv().await.is_some() {
             if let Err(e) = self.poll_and_dispatch().await {
-                tracing::error!("Error during outbox dispatch: {}", e);
+                tracing::error!("Error during poll and dispatch: {}", e);
             }
         }
     }
