@@ -7,11 +7,11 @@ use axum::{
 };
 use mpc_exploration::{
     Config, Peer,
-    communication::setup_peer_communication,
     domains::additions::{
         orchestrator::setup_addition_process_orchestrator,
         repository::InMemoryAdditionProcessRepository,
     },
+    peer_communication::setup_peer_communication,
     routes::app_router,
 };
 use tower_http::trace::TraceLayer;

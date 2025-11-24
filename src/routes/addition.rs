@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::{
     Peer,
-    communication::PeerMessage,
     domains::{self, additions::AdditionProcessProgress},
+    peer_communication::PeerMessage,
 };
 
 use super::{ApiError, RouterState};

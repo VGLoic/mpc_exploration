@@ -8,11 +8,11 @@ use axum::{
 use dotenvy::dotenv;
 use mpc_exploration::{
     Config,
-    communication::setup_peer_communication,
     domains::additions::{
         orchestrator::setup_addition_process_orchestrator,
         repository::InMemoryAdditionProcessRepository,
     },
+    peer_communication::setup_peer_communication,
     routes::app_router,
 };
 use tokio::signal;
