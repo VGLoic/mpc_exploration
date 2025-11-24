@@ -1,5 +1,4 @@
 use futures::{StreamExt, stream};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -18,12 +17,6 @@ pub struct OutboxPeerMessagesRelayer {
     batch_size: usize,
     /// Peer client
     peer_client: Arc<dyn PeerClient>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum PeerMessagePayload {
-    NewProcess {},
 }
 
 impl OutboxPeerMessagesRelayer {

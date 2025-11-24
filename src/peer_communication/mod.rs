@@ -8,7 +8,6 @@ mod peer_messages;
 
 use crate::Peer;
 use outbox_relayer::OutboxPeerMessagesRelayer;
-pub use outbox_relayer::PeerMessagePayload;
 use outbox_repository::InMemoryOutboxRepository;
 use outbox_sender::OutboxPeerMessagesSender;
 
