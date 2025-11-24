@@ -9,9 +9,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    Peer,
-    domains::{self, additions::AdditionProcessProgress},
-    peer_communication::PeerMessage,
+    Peer, domains,
+    peer_communication::{PeerMessage, peer_client::AdditionProcessProgress},
 };
 
 use super::{ApiError, RouterState};

@@ -45,9 +45,28 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
 
     let addition_process_repository = Arc::new(InMemoryAdditionProcessRepository::new());
 
+    let (
+        peer_client,
+        peer_messages_sender,
+        mut peer_messages_relayer,
+        peer_messages_relayer_pinger,
+    ) = setup_peer_communication(config.server_peer_id, &config.peers);
+    tokio::spawn(async move {
+        peer_messages_relayer.run().await;
+    });
+    tokio::spawn(async move {
+        if let Err(e) = peer_messages_relayer_pinger.run().await {
+            error!(
+                "Peer messages relayer interval pinger encountered an error: {}",
+                e
+            );
+        }
+    });
+
     let (mut addition_process_orchestrator, addition_process_orchestrator_pinger) =
         setup_addition_process_orchestrator(
             addition_process_repository.clone(),
+            peer_client,
             config.server_peer_id,
             &config.peers,
         );
@@ -58,20 +77,6 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         if let Err(e) = addition_process_orchestrator_pinger.run().await {
             error!(
                 "Addition process interval pinger encountered an error: {}",
-                e
-            );
-        }
-    });
-
-    let (peer_messages_sender, mut peer_messages_relayer, peer_messages_relayer_pinger) =
-        setup_peer_communication(config.server_peer_id, &config.peers);
-    tokio::spawn(async move {
-        peer_messages_relayer.run().await;
-    });
-    tokio::spawn(async move {
-        if let Err(e) = peer_messages_relayer_pinger.run().await {
-            error!(
-                "Peer messages relayer interval pinger encountered an error: {}",
                 e
             );
         }
