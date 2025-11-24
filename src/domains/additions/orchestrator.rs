@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     AdditionProcess, ReceiveSharesRequest, ReceiveSharesRequestError, ReceiveSharesSumsRequest,
-    ReceiveSharesSumsRequestError, repository::AdditionProcessRepository,
+    ReceiveSharesSumsRequestError, notifier::IntervalPing, repository::AdditionProcessRepository,
 };
 
 pub fn setup_addition_process_orchestrator(
@@ -23,7 +23,7 @@ pub fn setup_addition_process_orchestrator(
     own_peer_id: u8,
     peers: &[Peer],
 ) -> (AdditionProcessOrchestrator, IntervalPing) {
-    let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<()>(100);
+    let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<()>(1);
     let orchestrator = AdditionProcessOrchestrator::new(
         repository,
         own_peer_id,
@@ -221,10 +221,19 @@ impl AdditionProcessOrchestrator {
                 e.context("creating receive shares sums request")
             }
         })?;
-        self.repository
+        let updated_process = self
+            .repository
             .receive_shares_sums(receive_shares_sums_request)
             .await
             .map_err(|e| e.context("updating process with received shares sums"))?;
+
+        if let AdditionProcess::Completed(completed_process) = updated_process {
+            tracing::info!(
+                "Process {} completed with final sum: {}",
+                process.id,
+                completed_process.final_sum
+            );
+        }
 
         Ok(())
     }
@@ -261,23 +270,4 @@ impl AdditionProcessOrchestrator {
 struct AdditionProcessProgressFromPeer {
     peer_id: u8,
     progress: AdditionProcessProgress,
-}
-
-pub struct IntervalPing {
-    channel_sender: tokio::sync::mpsc::Sender<()>,
-}
-impl IntervalPing {
-    pub fn new(channel_sender: tokio::sync::mpsc::Sender<()>) -> Self {
-        Self { channel_sender }
-    }
-
-    pub async fn run(&self) -> Result<(), anyhow::Error> {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.channel_sender.send(()).await {
-                tracing::error!("Error sending ping to the sender channel: {}", e);
-            }
-        }
-    }
 }

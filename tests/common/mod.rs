@@ -63,22 +63,23 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         }
     });
 
-    let (mut addition_process_orchestrator, addition_process_orchestrator_pinger) =
+    let (mut addition_process_orchestrator, addition_process_notifier) =
         setup_addition_process_orchestrator(
             addition_process_repository.clone(),
             peer_client,
             config.server_peer_id,
             &config.peers,
         );
+    let addition_process_notifier = Arc::new(addition_process_notifier);
     tokio::spawn(async move {
         addition_process_orchestrator.run().await;
     });
-    tokio::spawn(async move {
-        if let Err(e) = addition_process_orchestrator_pinger.run().await {
-            error!(
-                "Addition process interval pinger encountered an error: {}",
-                e
-            );
+    tokio::spawn({
+        let addition_process_notifier = addition_process_notifier.clone();
+        async move {
+            if let Err(e) = addition_process_notifier.run_interval_ping().await {
+                error!("Addition process notifier encountered an error: {}", e);
+            }
         }
     });
 
@@ -86,6 +87,7 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         &config,
         addition_process_repository,
         Arc::new(peer_messages_sender),
+        addition_process_notifier,
     )
     .layer(
         TraceLayer::new_for_http()

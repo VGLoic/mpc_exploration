@@ -154,8 +154,10 @@ async fn get_process_progress(
 }
 
 async fn notify_internal_process_orchestrator(
-    State(_state): State<RouterState>,
+    State(state): State<RouterState>,
     _peer: Peer,
 ) -> Result<StatusCode, ApiError> {
+    state.addition_process_notifier.ping();
+
     Ok(StatusCode::OK)
 }
