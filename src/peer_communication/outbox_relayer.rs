@@ -8,7 +8,7 @@ use super::outbox_repository::{OutboxItem, OutboxRepository};
 
 /// Relayer for sending outbox items to their respective peers.
 /// It listens for signals on a channel to trigger dispatching of outbox items.
-pub struct PeerMessagesOutboxRelayer {
+pub struct OutboxPeerMessagesRelayer {
     /// Repository for managing outbox items.
     outbox_repository: Arc<dyn OutboxRepository>,
     /// Receiver channel to listen for dispatch signals.
@@ -35,7 +35,7 @@ pub enum PeerMessagePayload {
     NewProcess {},
 }
 
-impl PeerMessagesOutboxRelayer {
+impl OutboxPeerMessagesRelayer {
     pub fn new(
         outbox_repository: Arc<dyn OutboxRepository>,
         channel_receiver: tokio::sync::mpsc::Receiver<()>,
@@ -52,7 +52,7 @@ impl PeerMessagesOutboxRelayer {
     }
 }
 
-impl PeerMessagesOutboxRelayer {
+impl OutboxPeerMessagesRelayer {
     /// Runs the relayer, continuously listening for signals to poll and dispatch outbox items.
     pub async fn run(&mut self) {
         while self.channel_receiver.recv().await.is_some() {

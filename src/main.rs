@@ -72,7 +72,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     });
 
-    let (peer_communication, mut peer_messages_relayer, peer_messages_relayer_pinger) =
+    let (peer_messages_sender, mut peer_messages_relayer, peer_messages_relayer_pinger) =
         setup_peer_communication(config.server_peer_id, &config.peers);
     tokio::spawn(async move {
         peer_messages_relayer.run().await;
@@ -89,7 +89,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let app = app_router(
         &config,
         addition_process_repository,
-        Arc::new(peer_communication),
+        Arc::new(peer_messages_sender),
     )
     .layer((
         // Set `x-request-id` header for every request

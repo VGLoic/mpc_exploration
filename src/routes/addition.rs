@@ -56,7 +56,11 @@ async fn create_process(
         .iter()
         .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
         .collect::<Vec<_>>();
-    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+    if let Err(e) = state
+        .peer_messages_sender
+        .send_messages(peer_messages)
+        .await
+    {
         tracing::error!("error sending initial shares to peers: {}", e);
     }
 
