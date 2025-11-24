@@ -1,5 +1,4 @@
 use crate::mpc::{self, Share};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 use uuid::Uuid;
@@ -203,15 +202,6 @@ impl ReceiveSharesSumsRequest {
             final_sum: Some(final_sum),
         })
     }
-}
-
-// ############################################################
-// ################### PROCESS PROGRESS #######################
-// ############################################################
-#[derive(Clone, Serialize, Deserialize)]
-pub struct AdditionProcessProgress {
-    pub share: u64,
-    pub shares_sum: Option<u64>,
 }
 
 // ###########################################################

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::outbox_orchestrator::PeerEnvelope;
+use super::peer_messages::PeerMessage;
 use anyhow::anyhow;
 use uuid::Uuid;
 
@@ -11,15 +11,15 @@ use uuid::Uuid;
 /// It supports enqueuing, dequeuing, re-enqueuing, and fetching items ready to send.
 #[async_trait::async_trait]
 pub trait OutboxRepository: Send + Sync {
-    /// Enqueues multiple peer envelopes into the outbox.
+    /// Enqueues multiple peer messages into the outbox.
     /// It pings the dispatcher channel after enqueuing.
     /// # Arguments
-    /// * `envelopes` - A vector of `PeerEnvelope` items to enqueue.
+    /// * `messages` - A vector of `PeerMessage` items to enqueue.
     /// # Returns
     /// * A vector of `OutboxItem` representing the enqueued items.
-    async fn enqueue_envelopes(
+    async fn enqueue_messages(
         &self,
-        envelopes: Vec<PeerEnvelope>,
+        messages: Vec<PeerMessage>,
     ) -> Result<Vec<OutboxItem>, anyhow::Error>;
 
     /// Dequeues multiple outbox items by their IDs.
@@ -27,7 +27,7 @@ pub trait OutboxRepository: Send + Sync {
     /// * `ids` - A slice of `Uuid` representing the IDs of the outbox items to dequeue.
     /// # Returns
     /// * A vector of `OutboxItem` representing the dequeued items.
-    fn dequeue_envelopes(&self, ids: &[Uuid]) -> Result<Vec<OutboxItem>, anyhow::Error>;
+    fn dequeue_messages(&self, ids: &[Uuid]) -> Result<Vec<OutboxItem>, anyhow::Error>;
 
     /// Re-enqueues multiple outbox items by their IDs with a specified delay.
     /// # Arguments
@@ -35,7 +35,7 @@ pub trait OutboxRepository: Send + Sync {
     /// * `delay` - A `std::time::Duration` specifying the delay before the items are scheduled to be sent again.
     /// # Returns
     /// * An empty result indicating success or failure.
-    fn re_enqueue_envelopes(
+    fn re_enqueue_messages(
         &self,
         ids: &[Uuid],
         delay: std::time::Duration,
@@ -52,7 +52,7 @@ pub trait OutboxRepository: Send + Sync {
 #[derive(Clone)]
 pub struct OutboxItem {
     pub id: Uuid,
-    pub envelope: PeerEnvelope,
+    pub message: PeerMessage,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub scheduled_at: chrono::DateTime<chrono::Utc>,
     pub attempts: u8,
@@ -74,19 +74,19 @@ impl InMemoryOutboxRepository {
 
 #[async_trait::async_trait]
 impl OutboxRepository for InMemoryOutboxRepository {
-    async fn enqueue_envelopes(
+    async fn enqueue_messages(
         &self,
-        envelopes: Vec<PeerEnvelope>,
+        messages: Vec<PeerMessage>,
     ) -> Result<Vec<OutboxItem>, anyhow::Error> {
         let items = {
             let mut items = Vec::new();
             let mut items_lock = self.items.lock().map_err(|e| {
-                anyhow!("{e}").context("failed to lock envelopes mutex while enquing multiple")
+                anyhow!("{e}").context("failed to lock items mutex while enquing multiple")
             })?;
-            for envelope in envelopes {
+            for message in messages {
                 let item = OutboxItem {
                     id: Uuid::new_v4(),
-                    envelope,
+                    message,
                     created_at: chrono::Utc::now(),
                     scheduled_at: chrono::Utc::now(),
                     attempts: 0,
@@ -102,18 +102,19 @@ impl OutboxRepository for InMemoryOutboxRepository {
         Ok(items)
     }
 
-    fn re_enqueue_envelopes(
+    fn re_enqueue_messages(
         &self,
         ids: &[Uuid],
         delay: std::time::Duration,
     ) -> Result<(), anyhow::Error> {
-        let mut items_lock = self.items.lock().map_err(|e| {
-            anyhow!("{e}").context("failed to lock envelopes mutex while re-enquing")
-        })?;
+        let mut items_lock = self
+            .items
+            .lock()
+            .map_err(|e| anyhow!("{e}").context("failed to lock items mutex while re-enquing"))?;
         let now = chrono::Utc::now();
         for id in ids {
             let item = items_lock.get_mut(id).ok_or_else(|| {
-                anyhow!("Outbox item with id {id} not found").context("re-enqueueing envelopes")
+                anyhow!("Outbox item with id {id} not found").context("re-enqueueing items")
             })?;
             item.attempts += 1;
             item.scheduled_at = now
@@ -124,12 +125,12 @@ impl OutboxRepository for InMemoryOutboxRepository {
         Ok(())
     }
 
-    fn dequeue_envelopes(&self, ids: &[Uuid]) -> Result<Vec<OutboxItem>, anyhow::Error> {
+    fn dequeue_messages(&self, ids: &[Uuid]) -> Result<Vec<OutboxItem>, anyhow::Error> {
         let mut items = Vec::new();
         let mut items_lock = self
             .items
             .lock()
-            .map_err(|e| anyhow!("{e}").context("failed to lock envelopes mutex while dequeing"))?;
+            .map_err(|e| anyhow!("{e}").context("failed to lock items mutex while dequeing"))?;
         for id in ids {
             if let Some(item) = items_lock.remove(id) {
                 items.push(item);
@@ -140,7 +141,7 @@ impl OutboxRepository for InMemoryOutboxRepository {
 
     fn get_items_ready_to_send(&self, limit: usize) -> Result<Vec<OutboxItem>, anyhow::Error> {
         let items_lock = self.items.lock().map_err(|e| {
-            anyhow!("{e}").context("failed to lock envelopes mutex while getting ready to send")
+            anyhow!("{e}").context("failed to lock items mutex while getting ready to send")
         })?;
         let now = chrono::Utc::now();
         let mut ready_items: Vec<OutboxItem> = items_lock

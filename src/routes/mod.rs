@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
 use crate::{
-    Config, Peer, communication, domains::additions::repository::AdditionProcessRepository,
+    Config, Peer, domains::additions::repository::AdditionProcessRepository, peer_communication,
 };
 
 pub mod addition;
@@ -19,7 +19,7 @@ pub mod addition;
 #[derive(Clone)]
 pub struct RouterState {
     addition: Arc<dyn AdditionProcessRepository>,
-    peer_communication: Arc<dyn communication::PeerCommunication>,
+    peer_messages_sender: Arc<dyn peer_communication::PeerMessagesSender>,
     peers: Vec<Peer>,
     server_peer_id: u8,
 }
@@ -27,11 +27,11 @@ pub struct RouterState {
 pub fn app_router(
     config: &Config,
     addition_repository: Arc<dyn AdditionProcessRepository>,
-    peer_communication: Arc<dyn communication::PeerCommunication>,
+    peer_messages_sender: Arc<dyn peer_communication::PeerMessagesSender>,
 ) -> Router {
     let state = RouterState {
         addition: addition_repository,
-        peer_communication,
+        peer_messages_sender,
         peers: config.peers.clone(),
         server_peer_id: config.server_peer_id,
     };

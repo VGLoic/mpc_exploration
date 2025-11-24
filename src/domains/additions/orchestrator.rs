@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use anyhow::anyhow;
 use futures::{StreamExt, stream};
@@ -6,21 +9,28 @@ use futures::{StreamExt, stream};
 use crate::{
     Peer,
     domains::additions::{AwaitingPeerSharesProcess, AwaitingPeerSharesSumProcess},
+    peer_communication::peer_client::{AdditionProcessProgress, PeerClient},
 };
 
 use super::{
-    AdditionProcess, AdditionProcessProgress, ReceiveSharesRequest, ReceiveSharesRequestError,
-    ReceiveSharesSumsRequest, ReceiveSharesSumsRequestError, repository::AdditionProcessRepository,
+    AdditionProcess, ReceiveSharesRequest, ReceiveSharesRequestError, ReceiveSharesSumsRequest,
+    ReceiveSharesSumsRequestError, repository::AdditionProcessRepository,
 };
 
 pub fn setup_addition_process_orchestrator(
     repository: Arc<dyn AdditionProcessRepository>,
+    peer_client: Arc<dyn PeerClient>,
     own_peer_id: u8,
     peers: &[Peer],
 ) -> (AdditionProcessOrchestrator, IntervalPing) {
     let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<()>(100);
-    let orchestrator =
-        AdditionProcessOrchestrator::new(repository, own_peer_id, peers, channel_receiver);
+    let orchestrator = AdditionProcessOrchestrator::new(
+        repository,
+        own_peer_id,
+        peers,
+        peer_client,
+        channel_receiver,
+    );
     let interval_ping = IntervalPing::new(channel_sender);
     (orchestrator, interval_ping)
 }
@@ -29,9 +39,9 @@ pub fn setup_addition_process_orchestrator(
 pub struct AdditionProcessOrchestrator {
     repository: Arc<dyn AdditionProcessRepository>,
     own_peer_id: u8,
-    peer_urls: HashMap<u8, String>,
+    peer_ids: HashSet<u8>,
     channel_receiver: tokio::sync::mpsc::Receiver<()>,
-    client: reqwest::Client,
+    peer_client: Arc<dyn PeerClient>,
     failures_attempts: HashMap<uuid::Uuid, u8>,
 }
 
@@ -40,19 +50,16 @@ impl AdditionProcessOrchestrator {
         repository: Arc<dyn AdditionProcessRepository>,
         own_peer_id: u8,
         peers: &[Peer],
+        peer_client: Arc<dyn PeerClient>,
         channel_receiver: tokio::sync::mpsc::Receiver<()>,
     ) -> Self {
-        let peer_urls = peers
-            .iter()
-            .filter(|peer| peer.id != own_peer_id)
-            .map(|peer| (peer.id, peer.url.clone()))
-            .collect::<HashMap<u8, String>>();
+        let peer_ids = peers.iter().map(|peer| peer.id).collect::<HashSet<u8>>();
         Self {
             repository,
             own_peer_id,
-            peer_urls,
+            peer_ids,
             channel_receiver,
-            client: reqwest::Client::new(),
+            peer_client,
             failures_attempts: HashMap::new(),
         }
     }
@@ -138,8 +145,8 @@ impl AdditionProcessOrchestrator {
         process: &AwaitingPeerSharesProcess,
     ) -> Result<(), anyhow::Error> {
         let missing_peer_ids = self
-            .peer_urls
-            .keys()
+            .peer_ids
+            .iter()
             .filter(|peer_id| !process.received_shares.contains_key(peer_id))
             .cloned()
             .collect::<Vec<u8>>();
@@ -158,7 +165,7 @@ impl AdditionProcessOrchestrator {
         let receive_shares_request = ReceiveSharesRequest::new(
             process,
             received_shares,
-            self.peer_urls.len(),
+            self.peer_ids.len(),
         )
         .map_err(|e| match e {
             ReceiveSharesRequestError::Unknown(e) => e.context("creating receive shares request"),
@@ -178,8 +185,8 @@ impl AdditionProcessOrchestrator {
         process: &AwaitingPeerSharesSumProcess,
     ) -> Result<(), anyhow::Error> {
         let missing_peer_ids = self
-            .peer_urls
-            .keys()
+            .peer_ids
+            .iter()
             .filter(|peer_id| !process.received_shares_sums.contains_key(peer_id))
             .cloned()
             .collect::<Vec<u8>>();
@@ -207,7 +214,7 @@ impl AdditionProcessOrchestrator {
             process,
             received_shares_sums,
             self.own_peer_id,
-            self.peer_urls.len(),
+            self.peer_ids.len(),
         )
         .map_err(|e| match e {
             ReceiveSharesSumsRequestError::Unknown(e) => {
@@ -228,7 +235,12 @@ impl AdditionProcessOrchestrator {
         process_id: uuid::Uuid,
     ) -> Result<Vec<AdditionProcessProgressFromPeer>, anyhow::Error> {
         let bodies = stream::iter(peer_ids)
-            .map(|peer_id| async move { self.fetch_progress_from_peer(peer_id, process_id).await })
+            .map(|peer_id| async move {
+                self.peer_client
+                    .fetch_process_progress(peer_id, process_id)
+                    .await
+                    .map(|progress| AdditionProcessProgressFromPeer { peer_id, progress })
+            })
             .buffer_unordered(5);
         let results: Vec<Result<AdditionProcessProgressFromPeer, anyhow::Error>> =
             bodies.collect().await;
@@ -243,28 +255,6 @@ impl AdditionProcessOrchestrator {
             return Err(anyhow!("Failed to fetch progress from any peer"));
         }
         Ok(progresses)
-    }
-
-    async fn fetch_progress_from_peer(
-        &self,
-        peer_id: u8,
-        process_id: uuid::Uuid,
-    ) -> Result<AdditionProcessProgressFromPeer, anyhow::Error> {
-        let peer_url = self
-            .peer_urls
-            .get(&peer_id)
-            .ok_or(anyhow!("URL for peer {peer_id} not found"))?;
-
-        self.client
-            .get(format!("{}/additions/{}/progress", peer_url, process_id))
-            .header("X-PEER-ID", self.own_peer_id.to_string())
-            .send()
-            .await
-            .map_err(|e| anyhow!(e).context("sending request to peer"))?
-            .json::<AdditionProcessProgress>()
-            .await
-            .map_err(|e| anyhow!(e).context("parsing response from peer"))
-            .map(|progress| AdditionProcessProgressFromPeer { peer_id, progress })
     }
 }
 

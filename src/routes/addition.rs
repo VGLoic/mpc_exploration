@@ -9,9 +9,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    Peer,
-    communication::PeerMessage,
-    domains::{self, additions::AdditionProcessProgress},
+    Peer, domains,
+    peer_communication::{PeerMessage, peer_client::AdditionProcessProgress},
 };
 
 use super::{ApiError, RouterState};
@@ -56,7 +55,11 @@ async fn create_process(
         .iter()
         .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
         .collect::<Vec<_>>();
-    if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
+    if let Err(e) = state
+        .peer_messages_sender
+        .send_messages(peer_messages)
+        .await
+    {
         tracing::error!("error sending initial shares to peers: {}", e);
     }
 
