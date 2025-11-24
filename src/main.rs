@@ -86,7 +86,9 @@ async fn main() -> Result<(), anyhow::Error> {
     tokio::spawn({
         let addition_process_notifier = addition_process_notifier.clone();
         async move {
-            addition_process_notifier.run_interval_ping().await;
+            addition_process_notifier
+                .run_interval_ping(tokio::time::Duration::from_secs(1))
+                .await;
         }
     });
 
