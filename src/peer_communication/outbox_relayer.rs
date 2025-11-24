@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use super::outbox_repository::{OutboxItem, OutboxRepository};
 
-/// Orchestrator for sending outbox items to their respective peers.
+/// Relayer for sending outbox items to their respective peers.
 /// It listens for signals on a channel to trigger dispatching of outbox items.
-pub struct PeerCommunicationOutboxOrchestrator {
+pub struct PeerMessagesOutboxRelayer {
     /// Repository for managing outbox items.
     outbox_repository: Arc<dyn OutboxRepository>,
     /// Receiver channel to listen for dispatch signals.
@@ -35,7 +35,7 @@ pub enum PeerMessagePayload {
     NewProcess {},
 }
 
-impl PeerCommunicationOutboxOrchestrator {
+impl PeerMessagesOutboxRelayer {
     pub fn new(
         outbox_repository: Arc<dyn OutboxRepository>,
         channel_receiver: tokio::sync::mpsc::Receiver<()>,
@@ -52,8 +52,8 @@ impl PeerCommunicationOutboxOrchestrator {
     }
 }
 
-impl PeerCommunicationOutboxOrchestrator {
-    /// Runs the orchestrator, continuously listening for signals to poll and dispatch outbox items.
+impl PeerMessagesOutboxRelayer {
+    /// Runs the relayer, continuously listening for signals to poll and dispatch outbox items.
     pub async fn run(&mut self) {
         while self.channel_receiver.recv().await.is_some() {
             if let Err(e) = self.poll_and_dispatch().await {

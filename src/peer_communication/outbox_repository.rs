@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::outbox_orchestrator::PeerEnvelope;
+use super::outbox_relayer::PeerEnvelope;
 use anyhow::anyhow;
 use uuid::Uuid;
 
