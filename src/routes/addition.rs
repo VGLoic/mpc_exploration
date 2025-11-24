@@ -49,12 +49,12 @@ async fn create_process(
         .await
         .map_err(|e| e.context("creating addition process"))?;
 
-    info!("addition process {} created", created_process.id);
+    info!("addition process {} created", created_process.id());
 
     let peer_messages = state
         .peers
         .iter()
-        .map(|peer| PeerMessage::new_process(peer.id, created_process.id))
+        .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
         .collect::<Vec<_>>();
     if let Err(e) = state.peer_communication.send_messages(peer_messages).await {
         tracing::error!("error sending initial shares to peers: {}", e);
@@ -63,8 +63,8 @@ async fn create_process(
     Ok((
         StatusCode::OK,
         Json(CreatedProcessResponse {
-            process_id: created_process.id,
-            input: created_process.input,
+            process_id: created_process.id(),
+            input: created_process.input_shares().input,
         }),
     ))
 }
@@ -91,7 +91,8 @@ async fn initiate_process(
 
     info!(
         "addition process {} initiated after message from peer {}",
-        created_process.id, peer.id
+        created_process.id(),
+        peer.id
     );
 
     Ok(StatusCode::OK)
@@ -128,15 +129,15 @@ async fn get_process(
         .get_process(process_id)
         .await
         .map_err(|e| e.context("retrieving process"))?;
-    let sum = match &process.state {
-        domains::additions::AdditionProcessState::Completed { final_sum, .. } => Some(*final_sum),
+    let sum = match &process {
+        domains::additions::AdditionProcess::Completed(p) => Some(p.final_sum),
         _ => None,
     };
     Ok((
         StatusCode::OK,
         Json(GetProcessResponse {
             process_id,
-            input: process.input,
+            input: process.input_shares().input,
             sum,
         }),
     ))
@@ -154,14 +155,13 @@ async fn get_process_progress(
         .map_err(|e| e.context("retrieving process before getting progress"))?;
 
     let peer_share = process
+        .input_shares()
         .shares_to_send
         .get(&peer.id)
         .ok_or_else(|| ApiError::BadRequest("no share found for this peer".to_string()))?;
-    let shares_sum = match &process.state {
-        domains::additions::AdditionProcessState::AwaitingPeerSharesSum { shares_sum } => {
-            Some(*shares_sum)
-        }
-        domains::additions::AdditionProcessState::Completed { shares_sum, .. } => Some(*shares_sum),
+    let shares_sum = match &process {
+        domains::additions::AdditionProcess::AwaitingPeerSharesSum(p) => Some(p.shares_sum),
+        domains::additions::AdditionProcess::Completed(p) => Some(p.shares_sum),
         _ => None,
     };
 
