@@ -230,7 +230,6 @@ impl AdditionProcessOrchestrator {
             .await
             .map_err(|e| e.context("updating process with received shares sums"))?;
 
-        // Implement the logic to poll for peer shares sums and update the process state accordingly.
         Ok(())
     }
 
