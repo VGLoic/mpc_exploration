@@ -68,7 +68,7 @@ impl CreateProcessRequest {
 #[derive(Debug)]
 pub struct ReceiveSharesRequest {
     pub process_id: uuid::Uuid,
-    /// New shares from peers
+    /// Newly received shares from peers
     pub received_shares: HashMap<u8, u64>,
     /// Computed shares sum if all shares have been registered
     pub computed_shares_sum: Option<u64>,
@@ -122,7 +122,7 @@ impl ReceiveSharesRequest {
 
 pub struct ReceiveSharesSumsRequest {
     pub process_id: uuid::Uuid,
-    /// New shares sums from peers
+    /// Newly received shares sums from peers
     pub received_shares_sums: HashMap<u8, u64>,
     /// Computed final sum if all shares sums have been registered
     pub final_sum: Option<u64>,
