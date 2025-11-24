@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
 use futures::{StreamExt, stream};
@@ -32,7 +29,7 @@ pub struct AdditionProcessOrchestrator {
     peer_urls: HashMap<u8, String>,
     channel_receiver: tokio::sync::mpsc::Receiver<()>,
     client: reqwest::Client,
-    failures_attempts: Mutex<HashMap<uuid::Uuid, u8>>,
+    failures_attempts: HashMap<uuid::Uuid, u8>,
 }
 
 impl AdditionProcessOrchestrator {
@@ -53,34 +50,26 @@ impl AdditionProcessOrchestrator {
             peer_urls,
             channel_receiver,
             client: reqwest::Client::new(),
-            failures_attempts: Mutex::new(HashMap::new()),
+            failures_attempts: HashMap::new(),
         }
     }
 
     pub async fn run(&mut self) {
         while self.channel_receiver.recv().await.is_some() {
-            let raw_processes = match self.repository.get_ongoing_processes().await {
-                Ok(processes) => processes,
+            let processes = match self.repository.get_ongoing_processes().await {
+                Ok(processes) => processes
+                    .into_iter()
+                    .filter(|p| {
+                        if let Some(attempts) = self.failures_attempts.get(&p.id) {
+                            *attempts < 5
+                        } else {
+                            true
+                        }
+                    })
+                    .collect::<Vec<AdditionProcess>>(),
                 Err(e) => {
                     tracing::error!("Failed to fetch ongoing addition processes: {:?}", e);
                     continue;
-                }
-            };
-            let processes = {
-                if let Ok(failures_attempts) = self.failures_attempts.lock() {
-                    raw_processes
-                        .into_iter()
-                        .filter(|process| {
-                            if let Some(attempts) = failures_attempts.get(&process.id) {
-                                *attempts < 5
-                            } else {
-                                true
-                            }
-                        })
-                        .collect::<Vec<AdditionProcess>>()
-                } else {
-                    tracing::error!("Failed to acquire lock on failures_attempts");
-                    raw_processes
                 }
             };
 
@@ -93,26 +82,22 @@ impl AdditionProcessOrchestrator {
                 );
             }
 
+            let mut failure_ids = vec![];
             for process in processes {
-                let mut failure_ids = vec![];
                 if let Err(e) = self.poll_and_update_process(&process).await {
                     tracing::error!("Failed to poll and update process {}: {:?}", process.id, e);
                     failure_ids.push(process.id);
                 }
-                if !failure_ids.is_empty() {
-                    if let Ok(mut failures_attempts) = self.failures_attempts.lock() {
-                        for failure_id in &failure_ids {
-                            let counter = failures_attempts.entry(*failure_id).or_insert(0);
-                            *counter += 1;
-                            if *counter >= 5 {
-                                tracing::error!(
-                                    "Process {} reached maximum failure attempts. It will be skipped in future orchestrations.",
-                                    failure_id
-                                );
-                            }
-                        }
-                    } else {
-                        tracing::error!("Failed to acquire lock on failures_attempts");
+            }
+            if !failure_ids.is_empty() {
+                for failure_id in &failure_ids {
+                    let counter = self.failures_attempts.entry(*failure_id).or_insert(0);
+                    *counter += 1;
+                    if *counter >= 5 {
+                        tracing::error!(
+                            "Process {} reached maximum failure attempts. It will be skipped in future orchestrations.",
+                            failure_id
+                        );
                     }
                 }
             }
