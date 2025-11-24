@@ -4,12 +4,12 @@ use anyhow::anyhow;
 use thiserror::Error;
 use uuid::Uuid;
 
-mod outbox_dispatcher;
+mod outbox_orchestrator;
 mod outbox_repository;
 
 use crate::Peer;
-pub use outbox_dispatcher::PeerMessagePayload;
-use outbox_dispatcher::{PeerCommunicationOutboxDispatcher, PeerEnvelope};
+pub use outbox_orchestrator::PeerMessagePayload;
+use outbox_orchestrator::{PeerCommunicationOutboxOrchestrator, PeerEnvelope};
 use outbox_repository::{InMemoryOutboxRepository, OutboxRepository};
 
 /// Trait for peer-to-peer communication.
@@ -45,19 +45,11 @@ pub struct PeerMessage {
 }
 
 impl PeerMessage {
-    pub fn new_share_message(peer_id: u8, process_id: Uuid, value: u64) -> Self {
+    pub fn new_process(peer_id: u8, process_id: Uuid) -> Self {
         Self {
             peer_id,
             process_id,
-            payload: PeerMessagePayload::Share { value },
-        }
-    }
-
-    pub fn new_shares_sum_message(peer_id: u8, process_id: Uuid, value: u64) -> Self {
-        Self {
-            peer_id,
-            process_id,
-            payload: PeerMessagePayload::SharesSum { value },
+            payload: PeerMessagePayload::NewProcess {},
         }
     }
 }
@@ -125,7 +117,7 @@ pub fn setup_peer_communication(
     peers: &[Peer],
 ) -> (
     OutboxPeerCommunication,
-    PeerCommunicationOutboxDispatcher,
+    PeerCommunicationOutboxOrchestrator,
     IntervalPing,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel::<()>(100);
@@ -133,10 +125,10 @@ pub fn setup_peer_communication(
     let repository = Arc::new(InMemoryOutboxRepository::new(tx.clone()));
     let peer_communication =
         OutboxPeerCommunication::new(server_peer_id, peers, repository.clone());
-    let outbox_dispatcher =
-        PeerCommunicationOutboxDispatcher::new(repository, rx, 10, server_peer_id);
-    let outbox_interval_ping = IntervalPing::new(tx);
-    (peer_communication, outbox_dispatcher, outbox_interval_ping)
+    let outbox_orchestrator =
+        PeerCommunicationOutboxOrchestrator::new(repository, rx, 10, server_peer_id);
+    let orchestrator_pinger = IntervalPing::new(tx);
+    (peer_communication, outbox_orchestrator, orchestrator_pinger)
 }
 
 pub struct IntervalPing {
@@ -152,7 +144,7 @@ impl IntervalPing {
         loop {
             interval.tick().await;
             if let Err(e) = self.channel_sender.send(()).await {
-                tracing::error!("Error sending ping to outbox dispatcher: {}", e);
+                tracing::error!("Error sending ping to sender channel: {}", e);
             }
         }
     }

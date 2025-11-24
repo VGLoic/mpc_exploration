@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use super::outbox_repository::{OutboxItem, OutboxRepository};
 
-/// Dispatcher for sending outbox items to their respective peers.
-/// It listens for signals on a channel to trigger dispatching.
-pub struct PeerCommunicationOutboxDispatcher {
+/// Orchestrator for sending outbox items to their respective peers.
+/// It listens for signals on a channel to trigger dispatching of outbox items.
+pub struct PeerCommunicationOutboxOrchestrator {
     /// Repository for managing outbox items.
     outbox_repository: Arc<dyn OutboxRepository>,
     /// Receiver channel to listen for dispatch signals.
@@ -32,11 +32,10 @@ pub struct PeerEnvelope {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum PeerMessagePayload {
-    Share { value: u64 },
-    SharesSum { value: u64 },
+    NewProcess {},
 }
 
-impl PeerCommunicationOutboxDispatcher {
+impl PeerCommunicationOutboxOrchestrator {
     pub fn new(
         outbox_repository: Arc<dyn OutboxRepository>,
         channel_receiver: tokio::sync::mpsc::Receiver<()>,
@@ -53,7 +52,16 @@ impl PeerCommunicationOutboxDispatcher {
     }
 }
 
-impl PeerCommunicationOutboxDispatcher {
+impl PeerCommunicationOutboxOrchestrator {
+    /// Runs the orchestrator, continuously listening for signals to poll and dispatch outbox items.
+    pub async fn run(&mut self) {
+        while self.channel_receiver.recv().await.is_some() {
+            if let Err(e) = self.poll_and_dispatch().await {
+                tracing::error!("Error during poll and dispatch: {}", e);
+            }
+        }
+    }
+
     /// Polls the outbox repository for items ready to send and dispatches them.
     async fn poll_and_dispatch(&self) -> Result<(), anyhow::Error> {
         let items = self
@@ -123,7 +131,7 @@ impl PeerCommunicationOutboxDispatcher {
         let response = self
             .client
             .post(format!(
-                "{}/additions/{}/receive",
+                "{}/additions/{}/initiate",
                 item.envelope.peer_url, item.envelope.process_id
             ))
             .header("X-PEER-ID", self.server_peer_id.to_string())
@@ -137,16 +145,6 @@ impl PeerCommunicationOutboxDispatcher {
                 item.id,
                 response.status()
             );
-        }
-        Ok(())
-    }
-
-    /// Runs the dispatcher, continuously listening for signals to poll and dispatch outbox items.
-    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
-        while self.channel_receiver.recv().await.is_some() {
-            if let Err(e) = self.poll_and_dispatch().await {
-                tracing::error!("Error during outbox dispatch: {}", e);
-            }
         }
         Ok(())
     }

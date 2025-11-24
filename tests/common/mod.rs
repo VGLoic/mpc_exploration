@@ -1,11 +1,19 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
     extract::{MatchedPath, Request},
     http::Response,
 };
-use mpc_exploration::{Config, Peer, communication::setup_peer_communication, routes::app_router};
+use mpc_exploration::{
+    Config, Peer,
+    communication::setup_peer_communication,
+    domains::additions::{
+        orchestrator::setup_addition_process_orchestrator,
+        repository::InMemoryAdditionProcessRepository,
+    },
+    routes::app_router,
+};
 use tower_http::trace::TraceLayer;
 use tracing::{Level, Span, error, info, info_span, level_filters::LevelFilter};
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
@@ -35,20 +43,49 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
         )
         .try_init();
 
-    let (peer_communication, mut peer_communication_dispatcher, outbox_interval_ping) =
-        setup_peer_communication(config.server_peer_id, &config.peers);
+    let addition_process_repository = Arc::new(InMemoryAdditionProcessRepository::new());
+
+    let (mut addition_process_orchestrator, addition_process_orchestrator_pinger) =
+        setup_addition_process_orchestrator(
+            addition_process_repository.clone(),
+            config.server_peer_id,
+            &config.peers,
+        );
     tokio::spawn(async move {
-        if let Err(e) = peer_communication_dispatcher.run().await {
-            tracing::error!("Peer communication dispatcher encountered an error: {}", e);
-        }
+        addition_process_orchestrator.run().await;
     });
     tokio::spawn(async move {
-        if let Err(e) = outbox_interval_ping.run().await {
-            tracing::error!("Outbox interval ping encountered an error: {}", e);
+        if let Err(e) = addition_process_orchestrator_pinger.run().await {
+            error!(
+                "Addition process interval pinger encountered an error: {}",
+                e
+            );
         }
     });
 
-    let app = app_router(&config, peer_communication).layer(
+    let (
+        peer_communication,
+        mut peer_communication_orchestrator,
+        peer_communication_orchestrator_pinger,
+    ) = setup_peer_communication(config.server_peer_id, &config.peers);
+    tokio::spawn(async move {
+        peer_communication_orchestrator.run().await;
+    });
+    tokio::spawn(async move {
+        if let Err(e) = peer_communication_orchestrator_pinger.run().await {
+            error!(
+                "Peer communication orchestrator interval pinger encountered an error: {}",
+                e
+            );
+        }
+    });
+
+    let app = app_router(
+        &config,
+        addition_process_repository,
+        Arc::new(peer_communication),
+    )
+    .layer(
         TraceLayer::new_for_http()
             .make_span_with(|request: &Request<_>| {
                 let matched_path = request

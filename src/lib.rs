@@ -5,6 +5,7 @@ use std::{
 use tracing::Level;
 
 pub mod communication;
+pub mod domains;
 mod mpc;
 pub mod routes;
 
