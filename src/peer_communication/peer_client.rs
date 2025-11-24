@@ -8,8 +8,6 @@ use crate::Peer;
 
 #[async_trait::async_trait]
 pub trait PeerClient: Send + Sync {
-    async fn notify_new_process(&self, peer_id: u8, process_id: Uuid) -> Result<(), anyhow::Error>;
-
     async fn fetch_process_progress(
         &self,
         peer_id: u8,
@@ -48,31 +46,6 @@ impl HttpPeerClient {
 
 #[async_trait::async_trait]
 impl PeerClient for HttpPeerClient {
-    async fn notify_new_process(&self, peer_id: u8, process_id: Uuid) -> Result<(), anyhow::Error> {
-        let peer_url = self
-            .peer_urls
-            .get(&peer_id)
-            .ok_or_else(|| anyhow!("Peer ID {} not found", peer_id))?;
-
-        let response = self
-            .client
-            .post(format!("{}/additions/{}/initiate", peer_url, process_id))
-            .header("X-PEER-ID", self.server_peer_id.to_string())
-            .send()
-            .await
-            .map_err(|e| anyhow!("{e}").context("notifying peer of new process"))?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "Failed to notify peer {}: HTTP {}",
-                peer_id,
-                response.status()
-            ));
-        }
-
-        Ok(())
-    }
-
     async fn notify_process_progress(&self, peer_id: u8) -> Result<(), anyhow::Error> {
         let peer_url = self
             .peer_urls
@@ -81,7 +54,7 @@ impl PeerClient for HttpPeerClient {
 
         let response = self
             .client
-            .post(format!("{}/additions/progress_notification", peer_url))
+            .post(format!("{}/additions/progress-notification", peer_url))
             .header("X-PEER-ID", self.server_peer_id.to_string())
             .send()
             .await

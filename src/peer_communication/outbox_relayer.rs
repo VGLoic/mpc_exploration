@@ -112,14 +112,6 @@ impl OutboxPeerMessagesRelayer {
     /// The item is mapped to an HTTP POST request.
     async fn dispatch(&self, item: OutboxItem) -> Result<(), anyhow::Error> {
         match item.message {
-            PeerMessage::NewProcess {
-                peer_id,
-                process_id,
-            } => {
-                self.peer_client
-                    .notify_new_process(peer_id, process_id)
-                    .await
-            }
             PeerMessage::NotifyProcessProgress { peer_id } => {
                 self.peer_client.notify_process_progress(peer_id).await
             }
