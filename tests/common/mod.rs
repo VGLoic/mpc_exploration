@@ -77,9 +77,7 @@ pub async fn setup_instance(config: Config) -> Result<InstanceState, anyhow::Err
     tokio::spawn({
         let addition_process_notifier = addition_process_notifier.clone();
         async move {
-            if let Err(e) = addition_process_notifier.run_interval_ping().await {
-                error!("Addition process notifier encountered an error: {}", e);
-            }
+            addition_process_notifier.run_interval_ping().await;
         }
     });
 

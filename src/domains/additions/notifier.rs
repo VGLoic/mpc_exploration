@@ -10,12 +10,20 @@ impl IntervalPing {
         Self { channel_sender }
     }
 
-    pub async fn run_interval_ping(&self) -> Result<(), anyhow::Error> {
+    pub async fn run_interval_ping(&self) {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(1_000));
         loop {
             interval.tick().await;
             if let Err(e) = self.channel_sender.try_send(()) {
-                tracing::warn!("Error sending ping to the sender channel: {}", e);
+                match e {
+                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                        // It's fine, the channel is full, we can skip this ping
+                    }
+                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                        tracing::warn!("Channel closed, stopping interval ping");
+                        break;
+                    }
+                }
             }
         }
     }
