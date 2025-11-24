@@ -11,7 +11,7 @@ impl IntervalPing {
     }
 
     pub async fn run_interval_ping(&self) -> Result<(), anyhow::Error> {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(1_000));
         loop {
             interval.tick().await;
             if let Err(e) = self.channel_sender.try_send(()) {
