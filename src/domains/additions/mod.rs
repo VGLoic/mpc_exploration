@@ -110,7 +110,7 @@ impl ReceiveSharesRequest {
             .rem_euclid(PRIME as u128) as u64;
         Ok(Self {
             process_id: process.id,
-            received_shares: all_received_shares,
+            received_shares,
             computed_shares_sum: Some(computed_shares_sum),
         })
     }
@@ -179,7 +179,7 @@ impl ReceiveSharesSumsRequest {
         let final_sum = mpc::recover_secret(&all_sums_coordinates, PRIME)?;
         Ok(Self {
             process_id: process.id,
-            received_shares_sums: all_received_shares_sums,
+            received_shares_sums,
             final_sum: Some(final_sum),
         })
     }
