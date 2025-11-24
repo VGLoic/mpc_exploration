@@ -29,6 +29,33 @@ async fn test_addition_single_process() {
     assert_completed_addition_process(&client, &instances, process_id).await;
 }
 
+#[tokio::test]
+async fn test_addition_multiple_process() {
+    let instances = setup_instances(&[50004, 50005, 50006]).await;
+
+    let client = reqwest::Client::new();
+
+    let process_ids = (0..100).map(|_| uuid::Uuid::new_v4()).collect::<Vec<_>>();
+
+    for process_id in &process_ids {
+        // Start addition process on all instances
+        for instance in &instances {
+            let create_addition_process_response = client
+                .post(format!("{}/additions", &instance.server_url))
+                .json(&CreateProcessHttpBody {
+                    process_id: *process_id,
+                })
+                .send()
+                .await
+                .unwrap();
+            assert!(create_addition_process_response.status().is_success());
+        }
+    }
+    for process_id in &process_ids {
+        assert_completed_addition_process(&client, &instances, *process_id).await;
+    }
+}
+
 async fn setup_instances(ports: &[u16]) -> Vec<common::InstanceState> {
     let peers = ports
         .iter()
