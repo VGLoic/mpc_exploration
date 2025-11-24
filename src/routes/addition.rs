@@ -8,17 +8,13 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{
-    Peer, domains,
-    peer_communication::{PeerMessage, peer_client::AdditionProcessProgress},
-};
+use crate::{Peer, domains, peer_communication::peer_client::AdditionProcessProgress};
 
 use super::{ApiError, RouterState};
 
 pub fn addition_router() -> Router<RouterState> {
     Router::new()
         .route("/", post(create_process))
-        .route("/{id}/initiate", post(initiate_process))
         .route("/{id}", delete(delete_process))
         .route("/{id}", get(get_process))
         .route("/{id}/progress", get(get_process_progress))
@@ -29,12 +25,16 @@ pub struct CreatedProcessResponse {
     pub process_id: Uuid,
     pub input: u64,
 }
+#[derive(Serialize, Deserialize)]
+pub struct CreateProcessHttpBody {
+    pub process_id: Uuid,
+}
 async fn create_process(
     State(state): State<RouterState>,
+    Json(payload): Json<CreateProcessHttpBody>,
 ) -> Result<(StatusCode, Json<CreatedProcessResponse>), ApiError> {
-    let process_id = Uuid::new_v4();
     let create_process_request = domains::additions::CreateProcessRequest::new(
-        process_id,
+        payload.process_id,
         state.server_peer_id,
         &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
     )
@@ -50,18 +50,18 @@ async fn create_process(
 
     info!("addition process {} created", created_process.id());
 
-    let peer_messages = state
-        .peers
-        .iter()
-        .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
-        .collect::<Vec<_>>();
-    if let Err(e) = state
-        .peer_messages_sender
-        .send_messages(peer_messages)
-        .await
-    {
-        tracing::error!("error sending initial shares to peers: {}", e);
-    }
+    // let peer_messages = state
+    //     .peers
+    //     .iter()
+    //     .map(|peer| PeerMessage::new_process(peer.id, created_process.id()))
+    //     .collect::<Vec<_>>();
+    // if let Err(e) = state
+    //     .peer_messages_sender
+    //     .send_messages(peer_messages)
+    //     .await
+    // {
+    //     tracing::error!("error sending initial shares to peers: {}", e);
+    // }
 
     Ok((
         StatusCode::OK,
@@ -72,34 +72,34 @@ async fn create_process(
     ))
 }
 
-async fn initiate_process(
-    State(state): State<RouterState>,
-    peer: Peer,
-    Path(process_id): Path<Uuid>,
-) -> Result<StatusCode, ApiError> {
-    let create_process_request = domains::additions::CreateProcessRequest::new(
-        process_id,
-        state.server_peer_id,
-        &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
-    )
-    .map_err(|e| match e {
-        domains::additions::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
-    })?;
+// async fn initiate_process(
+//     State(state): State<RouterState>,
+//     peer: Peer,
+//     Path(process_id): Path<Uuid>,
+// ) -> Result<StatusCode, ApiError> {
+//     let create_process_request = domains::additions::CreateProcessRequest::new(
+//         process_id,
+//         state.server_peer_id,
+//         &state.peers.iter().map(|p| p.id).collect::<Vec<_>>(),
+//     )
+//     .map_err(|e| match e {
+//         domains::additions::CreateProcessRequestError::Unknown(err) => ApiError::from(err),
+//     })?;
 
-    let created_process = state
-        .addition
-        .create_process(create_process_request)
-        .await
-        .map_err(|e| e.context("creating addition process"))?;
+//     let created_process = state
+//         .addition
+//         .create_process(create_process_request)
+//         .await
+//         .map_err(|e| e.context("creating addition process"))?;
 
-    info!(
-        "addition process {} initiated after message from peer {}",
-        created_process.id(),
-        peer.id
-    );
+//     info!(
+//         "addition process {} initiated after message from peer {}",
+//         created_process.id(),
+//         peer.id
+//     );
 
-    Ok(StatusCode::OK)
-}
+//     Ok(StatusCode::OK)
+// }
 
 async fn delete_process(
     State(state): State<RouterState>,

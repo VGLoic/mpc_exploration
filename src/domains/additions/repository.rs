@@ -96,6 +96,9 @@ impl AdditionProcessRepository for InMemoryAdditionProcessRepository {
         request: CreateProcessRequest,
     ) -> Result<AdditionProcess, anyhow::Error> {
         let mut processes = self.processes.write().await;
+        if processes.contains_key(&request.process_id) {
+            return Err(anyhow::anyhow!("Process with this ID already exists"));
+        }
         let process = AdditionProcess::AwaitingPeerShares(AwaitingPeerSharesProcess {
             id: request.process_id,
             input_shares: request.input_shares.clone(),

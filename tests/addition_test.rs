@@ -4,67 +4,64 @@ use common::setup_instance;
 use futures::{StreamExt, stream};
 use mpc_exploration::{
     Config, Peer,
-    routes::addition::{CreatedProcessResponse, GetProcessResponse},
+    routes::addition::{CreateProcessHttpBody, GetProcessResponse},
 };
 use tracing::Level;
 
 #[tokio::test]
 async fn test_addition_single_process() {
-    let log_level = Level::WARN;
-
-    let peer_1 = Peer::new(1, "http://localhost:50001".to_string());
-    let peer_2 = Peer::new(2, "http://localhost:50002".to_string());
-    let peer_3 = Peer::new(3, "http://localhost:50003".to_string());
-
-    let config_1 = Config {
-        port: 50001,
-        log_level,
-        server_peer_id: 1,
-        peers: vec![peer_2.clone(), peer_3.clone()],
-    };
-    let instance_1 = setup_instance(config_1).await.unwrap();
-    let config_2 = Config {
-        port: 50002,
-        log_level,
-        server_peer_id: 2,
-        peers: vec![peer_1.clone(), peer_3.clone()],
-    };
-    let instance_2 = setup_instance(config_2).await.unwrap();
-    let config_3 = Config {
-        port: 50003,
-        log_level,
-        server_peer_id: 3,
-        peers: vec![peer_1.clone(), peer_2.clone()],
-    };
-    let instance_3 = setup_instance(config_3).await.unwrap();
-
-    let instances = vec![&instance_1, &instance_2, &instance_3];
+    let instances = setup_instances(&[50001, 50002, 50003]).await;
 
     let client = reqwest::Client::new();
 
-    // Start addition process on any instance
-    let initial_instance_index = (rand::random::<u8>() as usize) % instances.len();
-    let start_addition_response = client
-        .post(format!(
-            "{}/additions",
-            &instances[initial_instance_index].server_url
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert!(start_addition_response.status().is_success());
-    let process_id = start_addition_response
-        .json::<CreatedProcessResponse>()
-        .await
-        .unwrap()
-        .process_id;
+    let process_id = uuid::Uuid::new_v4();
+    // Start addition process on all instances
+    for instance in &instances {
+        let create_addition_process_response = client
+            .post(format!("{}/additions", &instance.server_url))
+            .json(&CreateProcessHttpBody { process_id })
+            .send()
+            .await
+            .unwrap();
+        assert!(create_addition_process_response.status().is_success());
+    }
 
     assert_completed_addition_process(&client, &instances, process_id).await;
 }
 
+async fn setup_instances(ports: &[u16]) -> Vec<common::InstanceState> {
+    let peers = ports
+        .iter()
+        .enumerate()
+        .map(|(i, port)| Peer::new((i + 1) as u8, format!("http://localhost:{}", port)))
+        .collect::<Vec<_>>();
+
+    let mut configs = Vec::new();
+    for (i, port) in ports.iter().enumerate() {
+        let peer_list = peers
+            .iter()
+            .filter(|p| p.id != (i + 1) as u8)
+            .cloned()
+            .collect::<Vec<_>>();
+        let config = Config {
+            port: port.clone(),
+            log_level: Level::WARN,
+            server_peer_id: (i + 1) as u8,
+            peers: peer_list,
+        };
+        configs.push(config);
+    }
+
+    let mut instances = Vec::new();
+    for config in configs {
+        instances.push(setup_instance(config).await.unwrap());
+    }
+    instances
+}
+
 async fn assert_completed_addition_process(
     client: &reqwest::Client,
-    instances: &[&common::InstanceState],
+    instances: &[common::InstanceState],
     process_id: uuid::Uuid,
 ) {
     let wait_for_completion_bodies = stream::iter(instances)
